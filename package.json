@@ -1,0 +1,22 @@
+{
+  "name": "repolens-backend",
+  "version": "1.0.0",
+  "description": "Application to analyse the github repository",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": [
+    "git-analyser"
+  ],
+  "author": "prathmesh parab",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
