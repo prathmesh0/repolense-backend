@@ -26,7 +26,9 @@ const registerUser = asyncHandler(async (req, res) => {
   //   get user details from frontend
   const { username, email, password } = req.body;
   //   validation
-  if ([username, email, password].some((field) => field?.trim() === "")) {
+  if (
+    [username, email, password].some((field) => !field || field.trim() === "")
+  ) {
     throw new ApiError(400, "All fields is required");
   }
   //   check if user already exist -check with email
@@ -148,7 +150,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 
     const user = await User.findById(decodedToken?._id);
 
-    if (!incomingRefreshToken) {
+    if (!user) {
       throw new ApiError(401, "Invalid Refresh Token");
     }
 
@@ -157,11 +159,11 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     }
 
     const options = {
-      httpsOnly: true,
+      httpOnly: true,
       secure: true,
     };
 
-    const { accessToken, newRefreshToken } =
+    const { accessToken, refreshToken: newRefreshToken } =
       await generateAccessAndRefreshTokens(user._id);
     return res
       .status(200)
