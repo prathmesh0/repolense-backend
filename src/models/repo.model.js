@@ -1,6 +1,5 @@
 import mongoose, { Schema } from "mongoose";
 
-
 const repoSchema = new Schema(
   {
     name: {
@@ -38,6 +37,11 @@ const repoSchema = new Schema(
       },
     ],
     contributors: [
+      {
+        type: String,
+      },
+    ],
+    languages: [
       {
         type: String,
       },
