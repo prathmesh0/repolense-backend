@@ -1,26 +1,18 @@
 import { Repo } from "../models/repo.model.js";
-import { ApiError } from "../utils/apiError.js";
-import { ApiResponse } from "../utils/apiResponse.js";
-import { asyncHandler } from "../utils/asyncHandler.js";
-import { Octokit } from "@octokit/rest";
 import { File } from "../models/file.model.js";
+import { ApiError } from "../utils/apiError.js";
+import { Octokit } from "@octokit/rest";
 
-const octokit = new Octokit({
-  auth: process.env.GITHUB_TOKEN || null,
-});
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN || null });
 
-// Recursive helper: build file tree + fetch contents
+// Recursive fetch and save functions
 const fetchContentsRecursive = async (owner, repoName, path = "") => {
   const { data } = await octokit.repos.getContent({
     owner,
     repo: repoName,
     path,
   });
-
-  console.log(data);
-
   if (Array.isArray(data)) {
-    // Directory
     const children = await Promise.all(
       data.map(async (item) => {
         if (item.type === "dir") {
@@ -40,8 +32,6 @@ const fetchContentsRecursive = async (owner, repoName, path = "") => {
     );
     return { type: "dir", name: path || "root", children };
   } else {
-    // Single File
-
     return {
       type: "file",
       name: data.name,
@@ -54,8 +44,6 @@ const fetchContentsRecursive = async (owner, repoName, path = "") => {
   }
 };
 
-// Save files into DB
-
 const saveFilesRecursive = async (node, repoId, owner, repoName) => {
   if (node.type === "file") {
     let content = "";
@@ -65,13 +53,11 @@ const saveFilesRecursive = async (node, repoId, owner, repoName) => {
         repo: repoName,
         path: node.path,
       });
-
-      //   if data is there then convert data from base64 to readable manner
       if (data && data.content && data.encoding === "base64") {
         content = Buffer.from(data.content, "base64").toString("utf8");
       }
     } catch (error) {
-      console.error(`Error fetching file ${node.path}:`, err.message);
+      console.error(`Error fetching file ${node.path}:`, error.message);
       throw new ApiError(500, "Error in fetching file");
     }
 
@@ -90,35 +76,23 @@ const saveFilesRecursive = async (node, repoId, owner, repoName) => {
   }
 };
 
-export const extractFileStructure = asyncHandler(async (req, res) => {
-  const { repoId } = req.params;
-  if (!repoId) {
-    throw new ApiError(404, "Please send valid Id");
+async function extractFileStructureInternal(repoId, owner, name) {
+  try {
+    // set Status to processing
+    await Repo.findByIdAndUpdate(repoId, { fileStructureStatus: "processing" });
+
+    const fileTree = await fetchContentsRecursive(owner, name);
+    await Repo.findByIdAndUpdate(repoId, { fileStructure: fileTree });
+    await saveFilesRecursive(fileTree, repoId, owner, name);
+
+    await Repo.findByIdAndUpdate(repoId, { fileStructureStatus: "ready" });
+  } catch (error) {
+    console.error("File structure extraction error:", error.message);
+
+    // 🔴 Mark failure
+    await Repo.findByIdAndUpdate(repoId, { fileStructureStatus: "failed" });
+    
   }
-  const repo = await Repo.findById(repoId);
+}
 
-  if (!repo) {
-    throw new ApiError(404, "Repo not found");
-  }
-
-  const { owner, name } = repo;
-
-  //   Fetch Repo File tree
-  const fileTree = await fetchContentsRecursive(owner, name);
-
-  repo.fileStructure = fileTree;
-  await repo.save();
-
-  //   Save each file + content in File collection
-  await saveFilesRecursive(fileTree, repo._id, owner, name);
-
-  return res
-    .status(200)
-    .json(
-      new ApiResponse(
-        200,
-        { fileStructure: repo.fileStructure },
-        "Repo file structure extracted successfully"
-      )
-    );
-});
+export { extractFileStructureInternal };

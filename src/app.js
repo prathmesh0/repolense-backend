@@ -24,12 +24,10 @@ app.use(cookieParser());
 // routes import
 import userRouter from "./routes/user.routes.js";
 import repoRouter from "./routes/repo.routes.js";
-import fileRouter from "./routes/file.routes.js";
 
 // routes declaration
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/repository", repoRouter);
-app.use("/api/v1/files", fileRouter);
 // http://localhost:8000/api/v1/users/register
 
 export { app };

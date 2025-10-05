@@ -4,6 +4,9 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { User } from "../models/user.model.js";
+import { extractFileStructureInternal } from "../services/fileStructure.service.js";
+import { analyzeRepoWithAIInternal } from "../services/getBasicAIAnlaysis.js";
+import { Analysis } from "../models/analysis.model.js";
 
 const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN || null,
@@ -20,6 +23,8 @@ const parseRepoUrl = (url) => {
     throw new ApiError(401, "Error parsing GitHub URL");
   }
 };
+
+// Main controller with Parrallel processing
 
 const analyseRepo = asyncHandler(async (req, res) => {
   try {
@@ -38,39 +43,24 @@ const analyseRepo = asyncHandler(async (req, res) => {
 
     const { owner, name, url: normalizedUrl } = parsed;
 
-    // Github API calls
+    // Parallelized GitHub calls
+    // ---------------------------
+    const [
+      { data: repoData },
+      { data: branchData },
+      { data: contributorData },
+      { data: langData },
+    ] = await Promise.all([
+      octokit.repos.get({ owner, repo: name }),
+      octokit.repos.listBranches({ owner, repo: name, per_page: 100 }),
+      octokit.repos.listContributors({ owner, repo: name, per_page: 100 }),
+      octokit.repos.listLanguages({ owner, repo: name }),
+    ]);
 
-    // Fetch repo metaData
-    const { data: repoData } = await octokit.repos.get({
-      owner,
-      repo: name,
-    });
+    const branches = (branchData || []).map((b) => b.name);
+    const contributors = (contributorData || []).map((c) => c.login);
+    const languages = Object.keys(langData || {});
 
-    // Fetch Branches
-    const { data: branchData } = await octokit.repos.listBranches({
-      owner,
-      repo: name,
-      per_page: 100,
-    });
-    const branches = branchData.map((b) => b.name);
-
-    // Fetch Contributors
-    const { data: contributorData } = await octokit.repos.listContributors({
-      owner,
-      repo: name,
-      per_page: 100,
-    });
-
-    const contributors = contributorData.map((c) => c.login);
-
-    // Fetch Languages
-    const { data: langData } = await octokit.repos.listLanguages({
-      owner,
-      repo: name,
-    });
-    const languages = Object.keys(langData); // only language names
-
-    // Fetch commits count
     let totalCommits = 0;
     try {
       const commitsResponse = await octokit.repos.listCommits({
@@ -78,21 +68,30 @@ const analyseRepo = asyncHandler(async (req, res) => {
         repo: name,
         per_page: 1,
       });
-      const linkHeader = commitsResponse.headers.link;
+      const linkHeader = commitsResponse.headers?.link;
       if (linkHeader) {
-        const lastPageMatch = linkHeader.match(/&page=(\d+)>; rel="last"/);
+        // look for rel="last"
+        const lastPageMatch =
+          linkHeader.match(/&page=(\d+)[^>]*>\s*;\s*rel="last"/) ||
+          linkHeader.match(/page=(\d+)[^>]*>\s*;\s*rel="last"/);
         if (lastPageMatch) {
           totalCommits = parseInt(lastPageMatch[1], 10);
+        } else {
+          totalCommits = commitsResponse.data.length || 0;
         }
       } else {
-        totalCommits = commitsResponse.data.length;
+        totalCommits = commitsResponse.data.length || 0;
       }
     } catch (err) {
-      totalCommits = 0; // fallback if repo is empty or API fails
+      totalCommits = 0; // safe fallback
+      console.warn("Could not fetch commits:", err.message);
     }
+
+    // Find/create repo per-user to avoid cross-user sharing
 
     let repo = await Repo.findOne({
       url: normalizedUrl,
+      user: userId,
     });
 
     if (repo) {
@@ -108,6 +107,10 @@ const analyseRepo = asyncHandler(async (req, res) => {
       repo.languages = languages;
       repo.commitCount = totalCommits;
       repo.lastSynced = new Date();
+
+      // Keep statuses as-is if already processing/ready; don't overwrite "ready"
+      if (!repo.fileStructureStatus) repo.fileStructureStatus = "pending";
+      if (!repo.aiStatus) repo.aiStatus = "pending";
 
       await repo.save();
     } else {
@@ -125,45 +128,52 @@ const analyseRepo = asyncHandler(async (req, res) => {
         commitCount: totalCommits,
         user: userId,
         lastSynced: new Date(),
+        fileStructureStatus: "pending",
+        aiStatus: "pending",
       });
     }
 
-    // Link Repo to User
-    const user = await User.findById(userId);
-    if (!user) {
-      throw new ApiError(404, "User not found");
-    }
-
-    const alreadyAdded = user.repoHistory.some(
-      (repoId) => repoId.toString() === repo._id.toString()
+    // Link Repo to User (atomic)
+    await User.findByIdAndUpdate(
+      userId,
+      { $addToSet: { repoHistory: repo._id } }, // adds only if not present
+      { new: true }
     );
 
-    if (alreadyAdded) {
-      return res
-        .status(200)
-        .json(
-          new ApiResponse(
-            200,
-            { basicInfo: repo },
-            "Repo metadata refreshed. Already in your repo history."
-          )
-        );
-    }
+    // Ensure repo saved (race prevention)
+    await repo.save();
 
-    user.repoHistory.push(repo._id);
-    await user.save();
+    // START PARALLEL TASK
+    // Start background tasks (non-blocking)
+    // - Set statuses to processing before enqueue
+    // - These functions should update repo.fileStructureStatus / repo.aiStatus on completion
 
-    //   return res
-    return res.status(201).json(
-      new ApiResponse(
-        200,
-        {
-          basicInfo: repo,
-        },
-        "Basic analysis of repo done successfully"
-      )
-    );
+    // mark processing (persist)
+    repo.fileStructureStatus = "processing";
+    repo.aiStatus = "processing";
+    await repo.save();
+
+    extractFileStructureInternal(repo._id, owner, name)
+      .then(() => analyzeRepoWithAIInternal(repo._id))
+      .catch((e) => {
+        console.error("File structure extraction error:", e);
+        Repo.findByIdAndUpdate(repo._id, {
+          fileStructureStatus: "failed",
+        }).catch(() => {});
+      });
+
+    // Return response immediately
+    return res
+      .status(201)
+      .json(
+        new ApiResponse(
+          201,
+          { basicInfo: repo },
+          "Repository added successfully; analysis running in background."
+        )
+      );
   } catch (error) {
+    console.error("analyseRepo error:", error);
     res.status(500).json({
       message: "Error adding repo",
       error: error.message,
@@ -171,4 +181,105 @@ const analyseRepo = asyncHandler(async (req, res) => {
   }
 });
 
-export { analyseRepo };
+// Get repo Info
+const getRepoInfo = asyncHandler(async (req, res) => {
+  const { repoId } = req.params;
+  const { info } = req.query; // ✅ flag from frontend
+
+  const valid = ["basicAnalysis", "fileStructure", "aiAnalysis", undefined];
+  if (!valid.includes(info))
+    throw new ApiError(400, "Invalid info query param");
+
+  const repo = await Repo.findById(repoId);
+  if (!repo) throw new ApiError(404, "Repository not found");
+
+  let responseData = {};
+  let message = "Repository information fetched successfully.";
+
+  switch (info) {
+    case "basicAnalysis":
+      responseData = {
+        basicInfo: {
+          _id: repo._id,
+          name: repo.name,
+          owner: repo.owner,
+          url: repo.url,
+          stars: repo.stars,
+          forks: repo.forks,
+          watchers: repo.watchers,
+          commitCount: repo.commitCount,
+          branches: repo.branches,
+          contributors: repo.contributors,
+          lastSynced: repo.lastSynced,
+          description: repo.description,
+          createdAt: repo.createdAt,
+          updatedAt: repo.updatedAt,
+          languages: repo.languages,
+        },
+        statuses: {
+          fileStructureStatus: repo.fileStructureStatus || "pending",
+          aiStatus: repo.aiStatus || "pending",
+        },
+      };
+      message = "Basic repository info fetched successfully.";
+      break;
+
+    case "fileStructure":
+      responseData = {
+        fileStructure: repo.fileStructure || null,
+        status: repo.fileStructureStatus || "pending",
+      };
+      message = "File structure fetched successfully.";
+      break;
+
+    case "aiAnalysis":
+      let analysis = null;
+      if (repo.aiAnalysis) {
+        analysis = await Analysis.findById(repo.aiAnalysis);
+      }
+      responseData = {
+        aiAnalysis: analysis || null,
+        status: repo.aiStatus || "pending",
+      };
+      message = "AI analysis fetched successfully.";
+      break;
+
+    default:
+      // ✅ Send everything
+      let fullAnalysis = null;
+      if (repo.aiAnalysis) {
+        fullAnalysis = await Analysis.findById(repo.aiAnalysis);
+      }
+      responseData = {
+        basicInfo: {
+          _id: repo._id,
+          name: repo.name,
+          owner: repo.owner,
+          url: repo.url,
+          stars: repo.stars,
+          forks: repo.forks,
+          watchers: repo.watchers,
+          commitCount: repo.commitCount,
+          branches: repo.branches,
+          contributors: repo.contributors,
+          lastSynced: repo.lastSynced,
+          description: repo.description,
+          createdAt: repo.createdAt,
+          updatedAt: repo.updatedAt,
+          languages: repo.languages,
+        },
+        fileStructure: repo.fileStructure || null,
+        aiAnalysis: fullAnalysis || null,
+        statuses: {
+          fileStructureStatus: repo.fileStructureStatus || "pending",
+          aiStatus: repo.aiStatus || "pending",
+        },
+      };
+      message = "Full repository details fetched successfully.";
+      break;
+  }
+
+  return res.status(200).json(new ApiResponse(200, responseData, message));
+});
+
+export { analyseRepo, getRepoInfo };

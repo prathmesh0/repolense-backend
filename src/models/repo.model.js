@@ -53,14 +53,30 @@ const repoSchema = new Schema(
     description: {
       type: String,
     }, // AI generated project summary
-    techStack: [
-      {
-        type: String,
-      },
-    ], // AI detected technologies
+    // techStack: [
+    //   {
+    //     type: String,
+    //   },
+    // ], // AI detected technologies
     fileStructure: {
       type: Object,
+    },
+    aiAnalysis: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Analysis",
     }, // AI generated file tree
+
+    fileStructureStatus: {
+      type: String,
+      enum: ["pending", "processing", "ready", "failed"],
+      default: "pending",
+    },
+    aiStatus: {
+      type: String,
+      enum: ["pending", "processing", "ready", "failed"],
+      default: "pending",
+    },
+
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
