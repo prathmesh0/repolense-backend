@@ -9,17 +9,21 @@ const embeddingSchema = new mongoose.Schema({
   file: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "File",
+  },
+  path: {
+    type: String,
+  },
+  vector: {
+    type: [Number], // array of floats (embedding)
     required: true,
   },
-  content: {
+  contentPreview: {
     type: String,
-    required: true,
-  }, // chunk of file
-  embedding: [
-    {
-      type: Number,
-    },
-  ], // vector representation
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
 });
 
-export default mongoose.model("Embedding", embeddingSchema);
+export const Embedding = mongoose.model("Embedding", embeddingSchema);

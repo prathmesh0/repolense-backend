@@ -76,6 +76,11 @@ const repoSchema = new Schema(
       enum: ["pending", "processing", "ready", "failed"],
       default: "pending",
     },
+    embeddingStatus: {
+      type: String,
+      enum: ["pending", "processing", "ready", "failed"],
+      default: "pending",
+    },
 
     user: {
       type: mongoose.Schema.Types.ObjectId,

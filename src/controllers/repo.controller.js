@@ -7,6 +7,7 @@ import { User } from "../models/user.model.js";
 import { extractFileStructureInternal } from "../services/fileStructure.service.js";
 import { analyzeRepoWithAIInternal } from "../services/getBasicAIAnlaysis.js";
 import { Analysis } from "../models/analysis.model.js";
+import { generateEmbeddingsForRepo } from "../services/embed.service.js";
 
 const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN || null,
@@ -111,6 +112,7 @@ const analyseRepo = asyncHandler(async (req, res) => {
       // Keep statuses as-is if already processing/ready; don't overwrite "ready"
       if (!repo.fileStructureStatus) repo.fileStructureStatus = "pending";
       if (!repo.aiStatus) repo.aiStatus = "pending";
+      if (!repo.embeddingStatus) repo.embeddingStatus = "pending";
 
       await repo.save();
     } else {
@@ -130,6 +132,7 @@ const analyseRepo = asyncHandler(async (req, res) => {
         lastSynced: new Date(),
         fileStructureStatus: "pending",
         aiStatus: "pending",
+        embeddingStatus: "pending",
       });
     }
 
@@ -151,10 +154,21 @@ const analyseRepo = asyncHandler(async (req, res) => {
     // mark processing (persist)
     repo.fileStructureStatus = "processing";
     repo.aiStatus = "processing";
+    repo.embeddingStatus = "processing";
     await repo.save();
 
     extractFileStructureInternal(repo._id, owner, name)
-      .then(() => analyzeRepoWithAIInternal(repo._id))
+      .then(() => {
+        console.log("✅ File structure extraction complete");
+
+        // Run AI analysis and embeddings in parallel
+        Promise.all([
+          analyzeRepoWithAIInternal(repo._id),
+          generateEmbeddingsForRepo(repo._id),
+        ])
+          .then(() => console.log("AI analysis & Embeddings completed"))
+          .catch((err) => console.error("Background task error:", err));
+      })
       .catch((e) => {
         console.error("File structure extraction error:", e);
         Repo.findByIdAndUpdate(repo._id, {
@@ -219,6 +233,7 @@ const getRepoInfo = asyncHandler(async (req, res) => {
         statuses: {
           fileStructureStatus: repo.fileStructureStatus || "pending",
           aiStatus: repo.aiStatus || "pending",
+          embeddingStatus: repo.embeddingStatus || "pending",
         },
       };
       message = "Basic repository info fetched successfully.";
@@ -273,6 +288,7 @@ const getRepoInfo = asyncHandler(async (req, res) => {
         statuses: {
           fileStructureStatus: repo.fileStructureStatus || "pending",
           aiStatus: repo.aiStatus || "pending",
+          embeddingStatus: repo.embeddingStatus || "pending",
         },
       };
       message = "Full repository details fetched successfully.";
