@@ -2,6 +2,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import { User } from "../models/user.model.js";
 import { ApiResponse } from "../utils/apiResponse.js";
+import { Chat } from "../models/chat.model.js";
 import jwt from "jsonwebtoken";
 
 const generateAccessAndRefreshTokens = async (userId) => {
@@ -183,4 +184,41 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     throw new ApiError(401, error?.message || "Invalid refresh token");
   }
 });
-export { registerUser, loginUser, logoutUser, refreshAccessToken };
+
+const getUserRepoHistoryAndChats = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id).populate("repoHistory");
+
+  if (!user) throw new ApiError(404, "User not found");
+  // Fetch latest chat message for each repo
+  const repoChats = await Promise.all(
+    user.repoHistory.map(async (repo) => {
+      const chat = await Chat.findOne({ repo: repo._id });
+      // Optionally, only return last message preview
+      const latestMessage = chat?.messages[chat.messages.length - 1];
+      return {
+        repoId: repo._id,
+        repoName: repo.name,
+        repoOwner: repo.owner,
+        messagePreview: latestMessage
+          ? { role: latestMessage.role, content: latestMessage.content }
+          : null,
+        chatId: chat?._id ?? null,
+        lastActive: chat?.updatedAt ?? null,
+      };
+    })
+  );
+
+  // Sort repos by lastActive (recent first)
+  repoChats.sort(
+    (a, b) => new Date(b.lastActive || 0) - new Date(a.lastActive || 0)
+  );
+
+  return res.json(new ApiResponse(200, repoChats, "Repo chat history fetched"));
+});
+export {
+  registerUser,
+  loginUser,
+  logoutUser,
+  refreshAccessToken,
+  getUserRepoHistoryAndChats,
+};

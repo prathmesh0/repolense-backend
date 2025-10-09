@@ -31,3 +31,17 @@ export const chatWithRepoController = asyncHandler(async (req, res) => {
       )
     );
 });
+
+export const getChatHistoryForRepo = asyncHandler(async (req, res) => {
+  const { repoId } = req.params;
+  const chat = await Chat.findOne({ repo: repoId });
+  if (!chat) throw new ApiError(404, "Chat not found for this repo");
+
+  return res.json(
+    new ApiResponse(
+      200,
+      { messages: chat.messages, chatId: chat._id },
+      "Chat history fetched"
+    )
+  );
+});

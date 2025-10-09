@@ -4,6 +4,7 @@ import {
   logoutUser,
   registerUser,
   refreshAccessToken,
+  getUserRepoHistoryAndChats,
 } from "../controllers/user.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 
@@ -14,6 +15,7 @@ router.route("/login").post(loginUser);
 
 // Secure routes
 router.route("/logout").post(verifyJWT, logoutUser);
+router.route("/repo-history").post(verifyJWT, getUserRepoHistoryAndChats);
 router.route("/refresh-token").post(refreshAccessToken);
 
 export default router;
