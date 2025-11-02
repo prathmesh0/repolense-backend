@@ -21,6 +21,7 @@ const parseRepoUrl = (url) => {
     if (!match) return null;
     return { owner: match[1], name: match[2], url: normalizedUrl };
   } catch (error) {
+    console.error("Error details:", error);
     throw new ApiError(401, "Error parsing GitHub URL");
   }
 };
@@ -247,7 +248,7 @@ const getRepoInfo = asyncHandler(async (req, res) => {
       message = "File structure fetched successfully.";
       break;
 
-    case "aiAnalysis":
+    case "aiAnalysis": {
       let analysis = null;
       if (repo.aiAnalysis) {
         analysis = await Analysis.findById(repo.aiAnalysis);
@@ -258,8 +259,9 @@ const getRepoInfo = asyncHandler(async (req, res) => {
       };
       message = "AI analysis fetched successfully.";
       break;
+    }
 
-    default:
+    default: {
       // ✅ Send everything
       let fullAnalysis = null;
       if (repo.aiAnalysis) {
@@ -293,6 +295,7 @@ const getRepoInfo = asyncHandler(async (req, res) => {
       };
       message = "Full repository details fetched successfully.";
       break;
+    }
   }
 
   return res.status(200).json(new ApiResponse(200, responseData, message));

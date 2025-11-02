@@ -8,6 +8,6 @@ import { verifyJWT } from "../middlewares/auth.middleware.js";
 const router = Router();
 
 router.route("/chat/:repoId").post(verifyJWT, chatWithRepoController);
-router.route("/chat-history/:repoId").post(verifyJWT, getChatHistoryForRepo);
+router.route("/chat-history/:repoId").get(verifyJWT, getChatHistoryForRepo);
 
 export default router;

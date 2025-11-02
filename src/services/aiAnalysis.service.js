@@ -50,6 +50,7 @@ const betterParseJSON = (text) => {
         : [],
     };
   } catch (err) {
+    console.error("Error details:", err);
     // Return fallback (as before)
     return {
       summary: "Parsing failed",

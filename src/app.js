@@ -25,11 +25,18 @@ app.use(cookieParser());
 import userRouter from "./routes/user.routes.js";
 import repoRouter from "./routes/repo.routes.js";
 import chatRouter from "./routes/chat.routes.js";
+import healthCheckRouter from "./routes/healthCheck.routes.js";
+import { errorHandler } from "./middlewares/errorHandler.js";
 
 // routes declaration
 app.use("/api/v1/users", userRouter);
 app.use("/api/v1/repository", repoRouter);
 app.use("/api/v1/aiChat", chatRouter);
+app.use("/api/v1/health", healthCheckRouter);
+
+// ERROR HANDLER (must be last)
+app.use(errorHandler);
+
 // http://localhost:8000/api/v1/users/register
 
 export { app };
