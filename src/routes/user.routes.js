@@ -15,7 +15,7 @@ router.route("/login").post(loginUser);
 
 // Secure routes
 router.route("/logout").post(verifyJWT, logoutUser);
-router.route("/repo-history").post(verifyJWT, getUserRepoHistoryAndChats);
+router.route("/repo-history").get(verifyJWT, getUserRepoHistoryAndChats);
 router.route("/refresh-token").post(refreshAccessToken);
 
 export default router;

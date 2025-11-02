@@ -4,6 +4,7 @@ import { User } from "../models/user.model.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { Chat } from "../models/chat.model.js";
 import jwt from "jsonwebtoken";
+import Fuse from "fuse.js";
 
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
@@ -187,15 +188,38 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 });
 
 const getUserRepoHistoryAndChats = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).populate("repoHistory");
+  const { query } = req.query;
+  const userId = req.user?._id;
 
+  if (!userId) throw new ApiError(401, "Unauthorized: User not found");
+
+  const user = await User.findById(userId).populate("repoHistory");
   if (!user) throw new ApiError(404, "User not found");
-  // Fetch latest chat message for each repo
+
+  let filteredRepos = user.repoHistory;
+
+  if (query) {
+    // Initialize Fuse.js with repo names
+    const fuse = new Fuse(user.repoHistory, {
+      keys: ["name"], // field to search within
+      threshold: 0.4, // lower = stricter match, higher = looser
+      includeScore: true,
+      ignoreLocation: true,
+    });
+
+    // Perform the fuzzy search
+    const results = fuse.search(query);
+
+    // Extract matched repos in ranked order
+    filteredRepos = results.map((r) => r.item);
+  }
+
+  // Fetch chat info for each filtered repo
   const repoChats = await Promise.all(
-    user.repoHistory.map(async (repo) => {
+    filteredRepos.map(async (repo) => {
       const chat = await Chat.findOne({ repo: repo._id });
-      // Optionally, only return last message preview
-      const latestMessage = chat?.messages[chat.messages.length - 1];
+      const latestMessage = chat?.messages?.[chat.messages.length - 1];
+
       return {
         repoId: repo._id,
         repoName: repo.name,
@@ -209,13 +233,22 @@ const getUserRepoHistoryAndChats = asyncHandler(async (req, res) => {
     })
   );
 
-  // Sort repos by lastActive (recent first)
+  // Sort repos by last active chat
   repoChats.sort(
     (a, b) => new Date(b.lastActive || 0) - new Date(a.lastActive || 0)
   );
 
-  return res.json(new ApiResponse(200, repoChats, "Repo chat history fetched"));
+  return res.json(
+    new ApiResponse(
+      200,
+      repoChats,
+      query
+        ? `Fuzzy search results for '${query}' fetched successfully`
+        : "All repositories fetched successfully"
+    )
+  );
 });
+
 export {
   registerUser,
   loginUser,
