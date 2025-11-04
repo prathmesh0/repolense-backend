@@ -193,7 +193,12 @@ const getUserRepoHistoryAndChats = asyncHandler(async (req, res) => {
 
   if (!userId) throw new ApiError(401, "Unauthorized: User not found");
 
-  const user = await User.findById(userId).populate("repoHistory");
+  const user = await User.findById(userId)
+    .populate({
+      path: "repoHistory",
+      options: { sort: { createdAt: -1 } },
+    })
+    .lean();
   if (!user) throw new ApiError(404, "User not found");
 
   let filteredRepos = user.repoHistory;
@@ -228,7 +233,7 @@ const getUserRepoHistoryAndChats = asyncHandler(async (req, res) => {
           ? { role: latestMessage.role, content: latestMessage.content }
           : null,
         chatId: chat?._id ?? null,
-        lastActive: chat?.updatedAt ?? null,
+        lastActive: chat?.updatedAt ?? repo.createdAt,
       };
     })
   );

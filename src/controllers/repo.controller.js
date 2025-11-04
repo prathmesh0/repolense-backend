@@ -8,6 +8,7 @@ import { extractFileStructureInternal } from "../services/fileStructure.service.
 import { analyzeRepoWithAIInternal } from "../services/getBasicAIAnlaysis.js";
 import { Analysis } from "../models/analysis.model.js";
 import { generateEmbeddingsForRepo } from "../services/embed.service.js";
+import { Chat } from "../models/chat.model.js";
 
 const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN || null,
@@ -210,6 +211,14 @@ const getRepoInfo = asyncHandler(async (req, res) => {
 
   let responseData = {};
   let message = "Repository information fetched successfully.";
+  const userRequestLabel =
+    info === "basicAnalysis"
+      ? "Basic Analysis"
+      : info === "fileStructure"
+        ? "Get File Structure"
+        : info === "aiAnalysis"
+          ? "AI Analysis"
+          : "Repository Info";
 
   switch (info) {
     case "basicAnalysis":
@@ -297,6 +306,16 @@ const getRepoInfo = asyncHandler(async (req, res) => {
       break;
     }
   }
+
+  let chat = await Chat.findOne({ repo: repoId });
+  if (!chat) chat = await Chat.create({ repo: repoId, messages: [] });
+
+  chat.messages.push({ role: "user", content: userRequestLabel });
+  chat.messages.push({
+    role: "assistant",
+    content: JSON.stringify(responseData, null, 2), // convert structured data to readable string
+  });
+  await chat.save();
 
   return res.status(200).json(new ApiResponse(200, responseData, message));
 });
