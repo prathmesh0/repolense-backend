@@ -13,6 +13,10 @@ const embeddingSchema = new mongoose.Schema({
   path: {
     type: String,
   },
+  chunkIndex: {
+    type: Number, // new field for chunk number per file
+    default: 0,
+  },
   vector: {
     type: [Number], // array of floats (embedding)
     required: true,

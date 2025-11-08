@@ -2,6 +2,56 @@ import { pipeline } from "@xenova/transformers";
 import { Embedding } from "../models/embedding.model.js";
 import { File } from "../models/file.model.js";
 import { Repo } from "../models/repo.model.js";
+import micromatch from "micromatch";
+import {
+  IMPORTANT_ROOT_FILES,
+  IGNORED_PATHS,
+  textExtensions,
+} from "../constants.js";
+
+const CHUNK_SIZE = 1024; // chars per chunk
+const CHUNK_OVERLAP = 0.3; // 30% overlap
+
+function shouldEmbedFile(filePath, fileName, repoRoot = "") {
+  // Normalize path relative to repoRoot if given
+  let relPath =
+    repoRoot && filePath.startsWith(repoRoot)
+      ? filePath.substring(repoRoot.length).replace(/^\/+/, "")
+      : filePath;
+
+  // Always embed important root files located at root (no slashes in relPath)
+  if (
+    !relPath.includes("/") &&
+    IMPORTANT_ROOT_FILES.some(
+      (important) => important.toLowerCase() === fileName.toLowerCase()
+    )
+  ) {
+    return true;
+  }
+
+  // Ignore files in ignored directories/patterns
+  if (micromatch.isMatch(relPath, IGNORED_PATHS)) {
+    return false;
+  }
+
+  // Finally, check if file extension is a recognized text/code type
+  return isTextFile(fileName || filePath);
+}
+
+function isTextFile(path) {
+  // Check by extension or name
+  return textExtensions.some((ext) => path.toLowerCase().endsWith(ext));
+}
+
+function chunkText(text) {
+  const step = Math.floor(CHUNK_SIZE * (1 - CHUNK_OVERLAP));
+  let chunks = [];
+  for (let start = 0; start < text.length; start += step) {
+    chunks.push(text.slice(start, start + CHUNK_SIZE));
+    if (start + CHUNK_SIZE >= text.length) break;
+  }
+  return chunks;
+}
 
 let embeddingModel = null;
 
@@ -17,96 +67,11 @@ async function loadEmbeddingModel() {
   return embeddingModel;
 }
 
-function isTextFile(path) {
-  const textExtensions = [
-    // Core languages
-    ".js",
-    ".jsx",
-    ".ts",
-    ".tsx",
-    ".py",
-    ".ipynb",
-    ".java",
-    ".kt",
-    ".kts",
-    ".c",
-    ".cpp",
-    ".h",
-    ".hpp",
-    ".go",
-    ".rs",
-    ".swift",
-    ".dart",
-
-    // Web & UI
-    ".html",
-    ".htm",
-    ".css",
-    ".scss",
-    ".sass",
-    ".less",
-    ".vue",
-    ".svelte",
-
-    // Backend / Server-side
-    ".php",
-    ".rb",
-    ".rake",
-    ".cs",
-    ".asp",
-    ".jsp",
-
-    // Data & Config
-    ".json",
-    ".yml",
-    ".yaml",
-    ".toml",
-    ".ini",
-    ".env",
-    ".xml",
-    ".csv",
-    ".tsv",
-
-    // Documentation / Text
-    ".md",
-    ".markdown",
-    ".txt",
-    ".rst",
-    ".tex",
-    ".log",
-
-    // Build / DevOps
-    ".gradle",
-    ".properties",
-    ".sh",
-    ".bash",
-    ".bat",
-    "Dockerfile",
-    ".dockerignore",
-    ".gitignore",
-    ".gitattributes",
-
-    // AI / ML Specific
-    ".pkl",
-    ".pt",
-    ".h5",
-    ".onnx",
-    ".pbtxt",
-    ".cfg",
-    ".sql",
-    ".parquet",
-    ".avro", // Some are semi-readable
-  ];
-
-  // Check by extension or name
-  return textExtensions.some((ext) => path.toLowerCase().endsWith(ext));
-}
-
 export async function generateEmbeddingsForRepo(repoId) {
   try {
     const model = await loadEmbeddingModel();
-
     const repo = await Repo.findById(repoId);
+
     if (!repo) {
       console.error(`❌ Repo not found for ID: ${repoId}`);
       return;
@@ -114,6 +79,34 @@ export async function generateEmbeddingsForRepo(repoId) {
 
     const files = await File.find({ repo: repoId });
     console.log(`📁 Found ${files.length} files for repo ${repoId}`);
+
+    for (const file of files) {
+      if (
+        !file.content ||
+        !shouldEmbedFile(file.path, file.path.split("/").pop())
+      )
+        continue;
+
+      const chunks = chunkText(file.content);
+      console.log("Chunks Lenght/ Database call", chunks.length);
+
+      for (let idx = 0; idx < chunks.length; idx++) {
+        const chunk = chunks[idx];
+        const output = await model(chunk, { pooling: "mean", normalize: true });
+        const vector = Array.from(output.data);
+
+        await Embedding.create({
+          repo: repoId,
+          file: file._id,
+          path: file.path,
+          chunkIndex: idx, // track chunk index per file
+          vector,
+          contentPreview: chunk, // store entire chunk as context
+        });
+      }
+
+      console.log(`🧬 Embedded: ${file.path}`);
+    }
 
     // 1️⃣ Embed Repo-level metadata
     const repoSummary = `
@@ -135,27 +128,8 @@ export async function generateEmbeddingsForRepo(repoId) {
       file: null,
       path: "REPO_METADATA",
       vector: Array.from(repoOutput.data),
-      contentPreview: repoSummary.slice(0, 500),
+      contentPreview: repoSummary,
     });
-
-    for (const file of files) {
-      if (!file.content || file.content.length < 50 || !isTextFile(file.path))
-        continue;
-      // You can truncate to first 1000 chars to reduce memory usage
-      const text = file.content.slice(0, 2000);
-
-      const output = await model(text, { pooling: "mean", normalize: true });
-      const vector = Array.from(output.data);
-      await Embedding.create({
-        repo: repoId,
-        file: file._id,
-        path: file.path,
-        vector,
-        contentPreview: text.slice(0, 300),
-      });
-
-      console.log(`🧬 Embedded: ${file.path}`);
-    }
 
     await Repo.findByIdAndUpdate(repoId, { embeddingStatus: "ready" });
 

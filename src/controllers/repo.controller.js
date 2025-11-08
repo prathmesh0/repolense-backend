@@ -46,19 +46,34 @@ const analyseRepo = asyncHandler(async (req, res) => {
 
     const { owner, name, url: normalizedUrl } = parsed;
 
-    // Parallelized GitHub calls
-    // ---------------------------
-    const [
-      { data: repoData },
-      { data: branchData },
-      { data: contributorData },
-      { data: langData },
-    ] = await Promise.all([
-      octokit.repos.get({ owner, repo: name }),
-      octokit.repos.listBranches({ owner, repo: name, per_page: 100 }),
-      octokit.repos.listContributors({ owner, repo: name, per_page: 100 }),
-      octokit.repos.listLanguages({ owner, repo: name }),
-    ]);
+    // Robust error handling example for Octokit calls
+    let repoData, branchData, contributorData, langData;
+    try {
+      const responses = await Promise.all([
+        octokit.repos.get({ owner, repo: name }),
+        octokit.repos.listBranches({ owner, repo: name, per_page: 100 }),
+        octokit.repos.listContributors({ owner, repo: name, per_page: 100 }),
+        octokit.repos.listLanguages({ owner, repo: name }),
+      ]);
+      repoData = responses[0].data;
+      branchData = responses[1].data;
+      contributorData = responses[2].data;
+      langData = responses[3].data;
+    } catch (err) {
+      if (err.status === 404) {
+        throw new ApiError(404, "GitHub repository not found or inaccessible");
+      } else if (err.status === 401) {
+        throw new ApiError(
+          401,
+          "Unauthorized - Invalid or expired GitHub token"
+        );
+      } else {
+        throw new ApiError(
+          500,
+          "Something went wrong while accessing GitHub API"
+        );
+      }
+    }
 
     const branches = (branchData || []).map((b) => b.name);
     const contributors = (contributorData || []).map((c) => c.login);
