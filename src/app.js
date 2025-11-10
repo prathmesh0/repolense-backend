@@ -1,12 +1,24 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+const allowedOrigins = [
+  process.env.CORS_ORIGIN,
+  "https://repolens-frontend.vercel.app",
+];
 
 const app = express();
 
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN,
+    origin: function (origin, callback) {
+      // Allow requests with no origin like mobile apps or curl
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );
