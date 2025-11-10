@@ -13,7 +13,6 @@ const repoSchema = new Schema(
     url: {
       type: String,
       required: true,
-      unique: true,
     },
     stars: {
       type: Number,

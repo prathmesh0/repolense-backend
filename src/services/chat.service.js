@@ -50,14 +50,15 @@ export const chatWithRepo = async (repoId, question) => {
   if (intent === "GREETING") {
     // Static response for greetings
     return {
-      answer: "Hello! I'm Repolense, I'll help you with your repo.",
+      answer:
+        "Hi! I'm Repolense. Excited to help you explore and understand your repository.",
       sources: [],
     };
   } else if (intent === "ACKNOWLEDGEMENT") {
     // Static response for acknowledgements
     return {
       answer:
-        "Thanks for acknowledging! Let me know if you have any questions.",
+        "Thanks for acknowledging! Just let me know what you’d like to explore next.",
       sources: [],
     };
   }
