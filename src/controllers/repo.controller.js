@@ -326,9 +326,29 @@ const getRepoInfo = asyncHandler(async (req, res) => {
   if (!chat) chat = await Chat.create({ repo: repoId, messages: [] });
 
   chat.messages.push({ role: "user", content: userRequestLabel });
+
+  // Decide what assistant message to push based on content presence and status
+  let assistantContent = "";
+  if (
+    (info === "aiAnalysis" &&
+      (responseData.aiAnalysis === null ||
+        responseData.status === "processing")) ||
+    (info === "fileStructure" &&
+      (responseData.fileStructure === null ||
+        responseData.status === "processing"))
+  ) {
+    // Friendly message instead of raw null data
+    assistantContent =
+      info === "aiAnalysis"
+        ? "AI analysis is still in progress. Please check back shortly."
+        : "File structure extraction is still in progress. Please check back shortly.";
+  } else {
+    assistantContent = JSON.stringify(responseData, null, 2); // full data
+  }
+
   chat.messages.push({
     role: "assistant",
-    content: JSON.stringify(responseData, null, 2), // convert structured data to readable string
+    content: assistantContent,
   });
   await chat.save();
 
