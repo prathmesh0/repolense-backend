@@ -91,4 +91,7 @@ const repoSchema = new Schema(
   }
 );
 
+// Compound unique index for (url, user)
+repoSchema.index({ url: 1, user: 1 }, { unique: true });
+
 export const Repo = mongoose.model("Repo", repoSchema);
