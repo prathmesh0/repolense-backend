@@ -77,7 +77,7 @@ ${repoContentText}
   try {
     console.log("⚡ Using Groq: llama-4-maveric");
     const response = await groq.chat.completions.create({
-      model: "meta-llama/llama-4-maverick-17b-128e-instruct",
+      model: "llama-3.3-70b-versatile",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
     });

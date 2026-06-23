@@ -32,7 +32,7 @@ Return just the intent label in uppercase.
 `;
 
   const classificationResponse = await groq.chat.completions.create({
-    model: "meta-llama/llama-4-maverick-17b-128e-instruct",
+    model: "llama-3.3-70b-versatile",
     messages: [{ role: "user", content: classifyPrompt }],
   });
 
@@ -113,7 +113,7 @@ If the question concerns metadata (repo name, owner, contributors, languages), u
 
   // 7️⃣ Query Groq
   const response = await groq.chat.completions.create({
-    model: "meta-llama/llama-4-maverick-17b-128e-instruct",
+    model: "llama-3.3-70b-versatile",
     messages: [{ role: "user", content: prompt }],
     temperature: 0.4,
   });

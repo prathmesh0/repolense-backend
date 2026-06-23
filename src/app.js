@@ -10,10 +10,15 @@ const app = express();
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin like mobile apps or curl
+    origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) !== -1) {
+
+      const allowed =
+        origin === "https://repolens-frontend.vercel.app" ||
+        origin.endsWith(".vercel.app") ||
+        "http://localhost:3000";
+
+      if (allowed) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS"));
