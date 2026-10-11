@@ -4,9 +4,12 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { User } from "../models/user.model.js";
-import { runAnalysisPipeline } from "../services/analysisPipeline.service.js";
+import {
+  enqueueAnalysis,
+  findActiveJob,
+  getQueueInfo,
+} from "../services/jobQueue.service.js";
 import { computeProgress } from "../services/repoStatus.service.js";
-import { STALE_PROCESSING_MS } from "../constants.js";
 import { Analysis } from "../models/analysis.model.js";
 import { Chat } from "../models/chat.model.js";
 import { logger } from "../utils/logger.js";
@@ -109,18 +112,9 @@ const analyseRepo = asyncHandler(async (req, res) => {
   });
 
   if (repo) {
-    // An analysis is already running: don't start a second pipeline that
+    // An analysis is already queued or running: don't start another one that
     // would delete and rebuild the same files/embeddings underneath it.
-    // Statuses older than the window are treated as stuck (e.g. server restart).
-    const isRunning = [
-      repo.fileStructureStatus,
-      repo.aiStatus,
-      repo.embeddingStatus,
-    ].includes("processing");
-    if (
-      isRunning &&
-      Date.now() - repo.updatedAt.getTime() < STALE_PROCESSING_MS
-    ) {
+    if (await findActiveJob(repo._id)) {
       return res
         .status(200)
         .json(
@@ -198,9 +192,9 @@ const analyseRepo = asyncHandler(async (req, res) => {
   repo.set("statusErrors", {});
   await repo.save();
 
-  // Not awaited: the client polls getRepoInfo for status and progress.
-  // The pipeline records its own failures and never throws.
-  runAnalysisPipeline(repo._id, owner, name);
+  // Queued for the background worker; the client polls getRepoInfo for
+  // status and progress. The queue survives restarts and retries crashed runs.
+  await enqueueAnalysis(repo._id, owner, name);
 
   // Return response immediately
   return res
@@ -264,6 +258,7 @@ const getRepoInfo = asyncHandler(async (req, res) => {
         },
         progress: computeProgress(repo),
         statusErrors: repo.statusErrors || {},
+        job: await getQueueInfo(repo._id),
       };
       message = "Basic repository info fetched successfully.";
       break;
@@ -322,6 +317,7 @@ const getRepoInfo = asyncHandler(async (req, res) => {
         },
         progress: computeProgress(repo),
         statusErrors: repo.statusErrors || {},
+        job: await getQueueInfo(repo._id),
       };
       message = "Full repository details fetched successfully.";
       break;

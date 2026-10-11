@@ -1,5 +1,4 @@
-import { Embedding } from "../models/embedding.model.js";
-import { cosineSimilarity } from "../utils/cosineSimilarity.js";
+import { findSimilarChunks } from "./retrieval.service.js";
 import { embedText } from "./embeddingModel.js";
 import { askLLM } from "./llm.service.js";
 import { UNTRUSTED_NOTICE, wrapUntrusted } from "../utils/prompt.js";
@@ -49,24 +48,10 @@ export const chatWithRepo = async (repoId, question) => {
   //   Generate Embedding for question
   const queryVector = await embedText(question);
 
-  // 3️⃣ Fetch embeddings for this repo
-  const allEmbeddings = await Embedding.find(
-    { repo: repoId },
-    "path chunkIndex contentPreview vector"
-  ).lean();
-  if (!allEmbeddings.length) throw new Error("No embeddings found for repo");
+  // 3️⃣ Find the 5 most similar chunks (Atlas vector search, or in-memory fallback)
+  const top = await findSimilarChunks(repoId, queryVector, 5);
+  if (!top.length) throw new Error("No embeddings found for repo");
 
-  // 4️⃣ Compute similarity scores
-  const scored = allEmbeddings.map((e) => ({
-    path: e.path,
-    chunkIndex: e.chunkIndex,
-    contentPreview: e.contentPreview,
-    vector: e.vector,
-    score: cosineSimilarity(queryVector, e.vector),
-  }));
-
-  // 5️⃣ Pick top 5
-  const top = scored.sort((a, b) => b.score - a.score).slice(0, 5);
   const context = top
     .map(
       (t, i) =>
