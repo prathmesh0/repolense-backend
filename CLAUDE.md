@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Integration tests start an in-memory MongoDB (`mongodb-memory-server`), which downloads a `mongod` binary on first run. Set `MONGOMS_SYSTEM_BINARY` to reuse an existing one. GitHub is mocked in tests; no network or API keys needed.
 
-Environment (`.env`, loaded first thing in `src/index.js`): `PORT`, `MONGODB_URI` (DB name `repolense` is appended in `src/db/index.js`), `ACCESS_TOKEN_SECRET`/`ACCESS_TOKEN_EXPIRY`, `REFRESH_TOKEN_SECRET`/`REFRESH_TOKEN_EXPIRY`, `GROQ_API_KEY`, `GITHUB_TOKEN` (strongly recommended: 60 requests/hour without it), `CORS_ORIGIN`, optional `LLM_MODEL` (default `llama-3.3-70b-versatile`), `LOG_LEVEL`, `RUN_WORKER` (default true), `JOB_CONCURRENCY` (default 1), `VECTOR_SEARCH` (`auto`|`atlas`|`memory`, default `auto`) and `VECTOR_INDEX_NAME`.
+Environment (`.env`, loaded first thing in `src/index.js`): `PORT`, `MONGODB_URI` (DB name `repolense` is appended in `src/db/index.js`), `ACCESS_TOKEN_SECRET`/`ACCESS_TOKEN_EXPIRY`, `REFRESH_TOKEN_SECRET`/`REFRESH_TOKEN_EXPIRY`, `GROQ_API_KEY`, `GITHUB_TOKEN` (strongly recommended: 60 requests/hour without it), `CORS_ORIGIN`, optional `LLM_MODEL` (default `openai/gpt-oss-120b`; Groq retires models, so check `GET https://api.groq.com/openai/v1/models` if calls fail with `model_not_found`), `LOG_LEVEL`, `RUN_WORKER` (default true), `JOB_CONCURRENCY` (default 1), `VECTOR_SEARCH` (`auto`|`atlas`|`memory`, default `auto`) and `VECTOR_INDEX_NAME`.
 
 ## Architecture
 
