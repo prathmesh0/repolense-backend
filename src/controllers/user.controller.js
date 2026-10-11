@@ -6,6 +6,7 @@ import { getChatSummaries } from "../services/chatHistory.service.js";
 import jwt from "jsonwebtoken";
 import Fuse from "fuse.js";
 import { logger } from "../utils/logger.js";
+import { clearAuthCookies, setAuthCookies } from "../utils/authCookies.js";
 
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
@@ -97,16 +98,7 @@ const loginUser = asyncHandler(async (req, res) => {
     "-password -refreshToken"
   );
 
-  const options = {
-    httpOnly: true,
-    secure: true,
-  };
-
-  return res
-    .status(200)
-    .cookie("accessToken", accessToken, options)
-    .cookie("refreshToken", refreshToken, options)
-    .json(
+  return setAuthCookies(res.status(200), accessToken, refreshToken).json(
       new ApiResponse(
         200,
         {
@@ -132,21 +124,12 @@ const logoutUser = asyncHandler(async (req, res) => {
     }
   );
 
-  const options = {
-    httpOnly: true,
-    secure: true,
-  };
-
-  return res
-    .status(200)
-    .clearCookie("accessToken", options)
-    .clearCookie("refreshToken", options)
-    .json(new ApiResponse(200, {}, "User logged Out"));
+  return clearAuthCookies(res.status(200)).json(new ApiResponse(200, {}, "User logged Out"));
 });
 
 const refreshAccessToken = asyncHandler(async (req, res) => {
   const incomingRefreshToken =
-    req.cookies.refreshToken || req.body.refreshToken;
+    req.cookies?.refreshToken || req.body?.refreshToken;
 
   if (!incomingRefreshToken) {
     throw new ApiError(401, "Unauthorized request");
@@ -168,18 +151,9 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
       throw new ApiError(401, "Refresh Token is expired or used");
     }
 
-    const options = {
-      httpOnly: true,
-      secure: true,
-    };
-
     const { accessToken, refreshToken: newRefreshToken } =
       await generateAccessAndRefreshTokens(user._id);
-    return res
-      .status(200)
-      .cookie("accessToken", accessToken, options)
-      .cookie("refreshToken", newRefreshToken, options)
-      .json(
+    return setAuthCookies(res.status(200), accessToken, newRefreshToken).json(
         new ApiResponse(
           200,
           {

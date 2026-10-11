@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Chat } from "../models/chat.model.js";
 import { ChatMessage } from "../models/chatMessage.model.js";
 import { logger } from "../utils/logger.js";
@@ -171,4 +172,72 @@ export async function getChatSummaries(repoIds) {
     });
   }
   return byRepo;
+}
+
+// ---- Cleanup of the old "fake" messages --------------------------------
+// Until the frontend stopped relying on them, getRepoInfo stored a label
+// ("AI Analysis") as a user message and a JSON dump of its own response (or a
+// "still in progress" note) as the assistant reply. They are not conversation.
+const FAKE_USER_LABELS = new Set([
+  "Basic Analysis",
+  "Get File Structure",
+  "AI Analysis",
+  "Repository Info",
+]);
+const FAKE_ASSISTANT_NOTES = new Set([
+  "AI analysis is still in progress. Please check back shortly.",
+  "File structure extraction is still in progress. Please check back shortly.",
+]);
+const FAKE_DUMP_RE = /^\{\s*"(basicInfo|fileStructure|aiAnalysis)"/;
+
+export function isFakeMessage(message) {
+  if (message.role === "user") return FAKE_USER_LABELS.has(message.content);
+  return (
+    FAKE_ASSISTANT_NOTES.has(message.content) ||
+    FAKE_DUMP_RE.test(message.content)
+  );
+}
+
+// Deletes the fake messages (all repos) and rebuilds each affected chat's
+// summary. Dry run unless apply is true. Returns counts.
+export async function purgeFakeMessages({ apply = false } = {}) {
+  const stats = { scanned: 0, fake: 0, chats: 0 };
+  const touched = new Set();
+  const doomed = [];
+
+  const cursor = ChatMessage.find({}, "repo role content").lean().cursor();
+  for await (const m of cursor) {
+    stats.scanned++;
+    if (!isFakeMessage(m)) continue;
+    stats.fake++;
+    touched.add(String(m.repo));
+    doomed.push(m._id);
+    if (apply && doomed.length >= 500) {
+      await ChatMessage.deleteMany({ _id: { $in: doomed.splice(0) } });
+    }
+  }
+  if (apply && doomed.length) {
+    await ChatMessage.deleteMany({ _id: { $in: doomed } });
+  }
+
+  if (apply) {
+    for (const repoId of touched) {
+      const repo = new mongoose.Types.ObjectId(repoId);
+      const [last, count] = await Promise.all([
+        ChatMessage.findOne({ repo }).sort({ _id: -1 }).lean(),
+        ChatMessage.countDocuments({ repo }),
+      ]);
+      await Chat.collection.updateMany(
+        { repo },
+        last
+          ? { $set: summaryFields(last, count) }
+          : {
+              $set: { messageCount: 0 },
+              $unset: { lastMessage: "", lastMessageAt: "" },
+            }
+      );
+    }
+  }
+  stats.chats = touched.size;
+  return stats;
 }

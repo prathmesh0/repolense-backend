@@ -11,7 +11,6 @@ import {
 } from "../services/jobQueue.service.js";
 import { computeProgress } from "../services/repoStatus.service.js";
 import { Analysis } from "../models/analysis.model.js";
-import { appendMessages } from "../services/chatHistory.service.js";
 import { logger } from "../utils/logger.js";
 
 const parseRepoUrl = (url) => {
@@ -218,18 +217,9 @@ const getRepoInfo = asyncHandler(async (req, res) => {
 
   // Ownership already verified by requireOwnedRepo
   const repo = req.repo;
-  const repoId = repo._id;
 
   let responseData = {};
   let message = "Repository information fetched successfully.";
-  const userRequestLabel =
-    info === "basicAnalysis"
-      ? "Basic Analysis"
-      : info === "fileStructure"
-        ? "Get File Structure"
-        : info === "aiAnalysis"
-          ? "AI Analysis"
-          : "Repository Info";
 
   switch (info) {
     case "basicAnalysis":
@@ -324,30 +314,6 @@ const getRepoInfo = asyncHandler(async (req, res) => {
     }
   }
 
-
-  // Decide what assistant message to push based on content presence and status
-  let assistantContent = "";
-  if (
-    (info === "aiAnalysis" &&
-      (responseData.aiAnalysis === null ||
-        responseData.status === "processing")) ||
-    (info === "fileStructure" &&
-      (responseData.fileStructure === null ||
-        responseData.status === "processing"))
-  ) {
-    // Friendly message instead of raw null data
-    assistantContent =
-      info === "aiAnalysis"
-        ? "AI analysis is still in progress. Please check back shortly."
-        : "File structure extraction is still in progress. Please check back shortly.";
-  } else {
-    assistantContent = JSON.stringify(responseData, null, 2); // full data
-  }
-
-  await appendMessages(repoId, [
-    { role: "user", content: userRequestLabel },
-    { role: "assistant", content: assistantContent },
-  ]);
 
   return res.status(200).json(new ApiResponse(200, responseData, message));
 });

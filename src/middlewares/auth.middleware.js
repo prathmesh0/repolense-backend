@@ -5,9 +5,11 @@ import { User } from "../models/user.model.js";
 
 export const verifyJWT = asyncHandler(async (req, _, next) => {
   try {
+    // An explicit Authorization header wins over a cookie, so a stale cookie
+    // cannot override a fresh token while clients move to cookie-only auth.
     const token =
-      req.cookies?.accessToken ||
-      req.header("Authorization")?.replace("Bearer ", "");
+      req.header("Authorization")?.replace("Bearer ", "") ||
+      req.cookies?.accessToken;
     if (!token) {
       throw new ApiError(401, "Unauthorized request");
     }
