@@ -4,6 +4,11 @@ import { Repo } from "../models/repo.model.js";
 import { redactSecrets } from "../utils/secrets.js";
 import { shouldIndexFile } from "../utils/fileFilters.js";
 import { embedText } from "./embeddingModel.js";
+import {
+  markStageFailed,
+  reportProgress,
+  userFacingError,
+} from "./repoStatus.service.js";
 
 const CHUNK_SIZE = 1024; // chars per chunk
 const CHUNK_OVERLAP = 0.3; // 30% overlap
@@ -31,11 +36,12 @@ export async function generateEmbeddingsForRepo(repoId) {
     // Re-analysis must replace old vectors, not pile up duplicates
     await Embedding.deleteMany({ repo: repoId });
 
+    const filter = { repo: repoId, content: { $nin: [null, ""] } };
+    const totalFiles = await File.countDocuments(filter);
+    await reportProgress(repoId, "embedding", 0, totalFiles);
+
     // Only load what we need; the cursor avoids holding every file in memory
-    const files = File.find(
-      { repo: repoId, content: { $nin: [null, ""] } },
-      "path content"
-    ).cursor();
+    const files = File.find(filter, "path content").cursor();
 
     let pending = [];
     let embeddedFiles = 0;
@@ -44,6 +50,7 @@ export async function generateEmbeddingsForRepo(repoId) {
       const batch = pending;
       pending = [];
       await Embedding.insertMany(batch, { ordered: false });
+      await reportProgress(repoId, "embedding", embeddedFiles, totalFiles);
     };
 
     for await (const file of files) {
@@ -63,6 +70,10 @@ export async function generateEmbeddingsForRepo(repoId) {
         if (pending.length >= INSERT_BATCH_SIZE) await flush();
       }
       embeddedFiles++;
+      // Small files may never fill a batch; still keep progress moving
+      if (embeddedFiles % 25 === 0) {
+        await reportProgress(repoId, "embedding", embeddedFiles, totalFiles);
+      }
     }
     await flush();
     console.log(`🧬 Embedded ${embeddedFiles} files for repo ${repoId}`);
@@ -86,6 +97,7 @@ export async function generateEmbeddingsForRepo(repoId) {
       contentPreview: repoSummary,
     });
 
+    await reportProgress(repoId, "embedding", totalFiles, totalFiles);
     await Repo.findByIdAndUpdate(repoId, { embeddingStatus: "ready" });
 
     console.log("✅ All embeddings generated successfully!");
@@ -93,6 +105,10 @@ export async function generateEmbeddingsForRepo(repoId) {
     console.error("❌ Embedding generation error:", error.message);
 
     // 🔴 Mark failure
-    await Repo.findByIdAndUpdate(repoId, { embeddingStatus: "failed" });
+    await markStageFailed(
+      repoId,
+      "embedding",
+      userFacingError(error, "Could not index the repository for chat.")
+    );
   }
 }

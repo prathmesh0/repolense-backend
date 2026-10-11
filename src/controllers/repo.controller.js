@@ -4,10 +4,10 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { User } from "../models/user.model.js";
-import { extractFileStructureInternal } from "../services/fileStructure.service.js";
-import { analyzeRepoWithAIInternal } from "../services/getBasicAIAnlaysis.js";
+import { runAnalysisPipeline } from "../services/analysisPipeline.service.js";
+import { computeProgress } from "../services/repoStatus.service.js";
+import { STALE_PROCESSING_MS } from "../constants.js";
 import { Analysis } from "../models/analysis.model.js";
-import { generateEmbeddingsForRepo } from "../services/embed.service.js";
 import { Chat } from "../models/chat.model.js";
 
 const octokit = new Octokit({
@@ -115,7 +115,6 @@ const analyseRepo = asyncHandler(async (req, res) => {
     // An analysis is already running: don't start a second pipeline that
     // would delete and rebuild the same files/embeddings underneath it.
     // Statuses older than the window are treated as stuck (e.g. server restart).
-    const IN_PROGRESS_WINDOW_MS = 30 * 60 * 1000;
     const isRunning = [
       repo.fileStructureStatus,
       repo.aiStatus,
@@ -123,7 +122,7 @@ const analyseRepo = asyncHandler(async (req, res) => {
     ].includes("processing");
     if (
       isRunning &&
-      Date.now() - repo.updatedAt.getTime() < IN_PROGRESS_WINDOW_MS
+      Date.now() - repo.updatedAt.getTime() < STALE_PROCESSING_MS
     ) {
       return res
         .status(200)
@@ -191,30 +190,20 @@ const analyseRepo = asyncHandler(async (req, res) => {
   // - Set statuses to processing before enqueue
   // - These functions should update repo.fileStructureStatus / repo.aiStatus on completion
 
-  // mark processing (persist)
+  // mark processing (persist) and clear the previous run's progress/errors
   repo.fileStructureStatus = "processing";
   repo.aiStatus = "processing";
   repo.embeddingStatus = "processing";
+  repo.set("progress", {
+    fileStructure: { done: 0, total: 0 },
+    embedding: { done: 0, total: 0 },
+  });
+  repo.set("statusErrors", {});
   await repo.save();
 
-  extractFileStructureInternal(repo._id, owner, name)
-    .then(() => {
-      console.log("✅ File structure extraction complete");
-
-      // Run AI analysis and embeddings in parallel
-      Promise.all([
-        analyzeRepoWithAIInternal(repo._id),
-        generateEmbeddingsForRepo(repo._id),
-      ])
-        .then(() => console.log("AI analysis & Embeddings completed"))
-        .catch((err) => console.error("Background task error:", err));
-    })
-    .catch((e) => {
-      console.error("File structure extraction error:", e);
-      Repo.findByIdAndUpdate(repo._id, {
-        fileStructureStatus: "failed",
-      }).catch(() => {});
-    });
+  // Not awaited: the client polls getRepoInfo for status and progress.
+  // The pipeline records its own failures and never throws.
+  runAnalysisPipeline(repo._id, owner, name);
 
   // Return response immediately
   return res
@@ -276,6 +265,8 @@ const getRepoInfo = asyncHandler(async (req, res) => {
           aiStatus: repo.aiStatus || "pending",
           embeddingStatus: repo.embeddingStatus || "pending",
         },
+        progress: computeProgress(repo),
+        statusErrors: repo.statusErrors || {},
       };
       message = "Basic repository info fetched successfully.";
       break;
@@ -332,6 +323,8 @@ const getRepoInfo = asyncHandler(async (req, res) => {
           aiStatus: repo.aiStatus || "pending",
           embeddingStatus: repo.embeddingStatus || "pending",
         },
+        progress: computeProgress(repo),
+        statusErrors: repo.statusErrors || {},
       };
       message = "Full repository details fetched successfully.";
       break;

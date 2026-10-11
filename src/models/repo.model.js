@@ -85,6 +85,24 @@ const repoSchema = new Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     }, // who added this repo
+
+    // Live progress of the long-running stages
+    progress: {
+      fileStructure: {
+        done: { type: Number, default: 0 },
+        total: { type: Number, default: 0 },
+      },
+      embedding: {
+        done: { type: Number, default: 0 },
+        total: { type: Number, default: 0 },
+      },
+    },
+    // Short user-facing reason when a stage failed
+    statusErrors: {
+      fileStructure: String,
+      ai: String,
+      embedding: String,
+    },
   },
   {
     timestamps: true,

@@ -3,6 +3,11 @@ import { File } from "../models/file.model.js";
 import { Octokit } from "@octokit/rest";
 import { redactSecrets } from "../utils/secrets.js";
 import {
+  markStageFailed,
+  reportProgress,
+  userFacingError,
+} from "./repoStatus.service.js";
+import {
   MAX_FILE_BYTES,
   MAX_FILES_TO_FETCH,
   shouldIndexFile,
@@ -17,7 +22,7 @@ const extensionOf = (name) =>
   name.includes(".") ? name.substring(name.lastIndexOf(".")) : "";
 
 // Runs `worker` over `items` with at most `limit` in flight
-async function mapWithConcurrency(items, limit, worker) {
+async function mapWithConcurrency(items, limit, worker, onItemDone) {
   const results = new Array(items.length);
   let next = 0;
   const runners = Array.from(
@@ -26,6 +31,7 @@ async function mapWithConcurrency(items, limit, worker) {
       while (next < items.length) {
         const i = next++;
         results[i] = await worker(items[i], i);
+        onItemDone?.();
       }
     }
   );
@@ -109,6 +115,8 @@ async function extractFileStructureInternal(repoId, owner, name) {
       )
       .slice(0, MAX_FILES_TO_FETCH);
 
+    let done = 0;
+    await reportProgress(repoId, "fileStructure", 0, candidates.length);
     const fetched = await mapWithConcurrency(
       candidates,
       BLOB_CONCURRENCY,
@@ -136,7 +144,20 @@ async function extractFileStructureInternal(repoId, owner, name) {
           console.error(`Error fetching file ${entry.path}:`, error.message);
           return null;
         }
+      },
+      () => {
+        done++;
+        // Every 10 files; each write also keeps updatedAt fresh
+        if (done % 10 === 0 && done < candidates.length) {
+          reportProgress(repoId, "fileStructure", done, candidates.length);
+        }
       }
+    );
+    await reportProgress(
+      repoId,
+      "fileStructure",
+      candidates.length,
+      candidates.length
     );
 
     // Re-analysis must replace old files, not pile up duplicates
@@ -152,11 +173,17 @@ async function extractFileStructureInternal(repoId, owner, name) {
     );
 
     await Repo.findByIdAndUpdate(repoId, { fileStructureStatus: "ready" });
+    return true;
   } catch (error) {
     console.error("File structure extraction error:", error.message);
 
     // 🔴 Mark failure
-    await Repo.findByIdAndUpdate(repoId, { fileStructureStatus: "failed" });
+    await markStageFailed(
+      repoId,
+      "fileStructure",
+      userFacingError(error, "Could not read the repository files.")
+    );
+    return false;
   }
 }
 
