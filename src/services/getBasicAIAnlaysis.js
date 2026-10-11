@@ -22,6 +22,9 @@ async function analyzeRepoWithAIInternal(repoId) {
     const analysisData = await generateRepoAnalysis(repoContentText);
     console.log("✅ AI Response:", analysisData);
 
+    // Re-analysis replaces the previous result instead of accumulating
+    await Analysis.deleteMany({ repo: repoId });
+
     // Save in Analysis collection
     const analysis = await Analysis.create({
       repo: repoId,

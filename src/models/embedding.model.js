@@ -30,4 +30,6 @@ const embeddingSchema = new mongoose.Schema({
   },
 });
 
+embeddingSchema.index({ repo: 1 });
+
 export const Embedding = mongoose.model("Embedding", embeddingSchema);

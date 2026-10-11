@@ -26,4 +26,6 @@ const analysisSchema = new mongoose.Schema({
   },
 });
 
+analysisSchema.index({ repo: 1 });
+
 export const Analysis = mongoose.model("Analysis", analysisSchema);
