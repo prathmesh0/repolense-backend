@@ -11,7 +11,9 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "purge:sensitive": "node scripts/purge-sensitive-data.js"
+    "purge:sensitive": "node scripts/purge-sensitive-data.js",
+    "worker": "node src/worker.js",
+    "create:vector-index": "node scripts/create-vector-index.js"
   },
   "keywords": [
     "git-analyser"

@@ -1,4 +1,5 @@
 import { Repo } from "../models/repo.model.js";
+import { Job } from "../models/job.model.js";
 import { STALE_PROCESSING_MS } from "../constants.js";
 import { logger } from "../utils/logger.js";
 
@@ -74,8 +75,21 @@ export async function sweepStuckRepos(maxAgeMs) {
   ).lean();
   if (!stuck.length) return 0;
 
+  // A repo that still has a queued or running job is not stuck: the queue's
+  // lease logic owns it (retries it or fails it).
+  const withJob = new Set(
+    (
+      await Job.find(
+        { repo: { $in: stuck.map((r) => r._id) }, active: true },
+        "repo"
+      ).lean()
+    ).map((j) => String(j.repo))
+  );
+  const orphaned = stuck.filter((r) => !withJob.has(String(r._id)));
+  if (!orphaned.length) return 0;
+
   const count = await failProcessingStages(
-    { _id: { $in: stuck.map((r) => r._id) } },
+    { _id: { $in: orphaned.map((r) => r._id) } },
     INTERRUPTED_MESSAGE
   );
   if (count) logger.warn(`🧹 Marked ${count} stuck stage(s) as failed`);

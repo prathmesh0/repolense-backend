@@ -7,11 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run dev` — start with nodemon (entry `src/index.js`); `npm start` runs the same entry without nodemon
 - `npm test` — Vitest (unit + integration); `npm run test:watch` for watch mode. Run one file with `npx vitest run tests/unit/secrets.test.js`
 - `npm run lint` — ESLint with `--fix`; `npm run format` — Prettier write
+- `npm run worker` — standalone job worker (no HTTP). Run the web server with `RUN_WORKER=false` to keep embedding off the request-serving process
+- `npm run create:vector-index` — creates the Atlas vector search index (Atlas only; see Retrieval below)
 - `npm run purge:sensitive` — one-off cleanup of stored credential files/keys (dry run by default, `-- --apply` to change data)
 
 Integration tests start an in-memory MongoDB (`mongodb-memory-server`), which downloads a `mongod` binary on first run. Set `MONGOMS_SYSTEM_BINARY` to reuse an existing one. GitHub is mocked in tests; no network or API keys needed.
 
-Environment (`.env`, loaded first thing in `src/index.js`): `PORT`, `MONGODB_URI` (DB name `repolense` is appended in `src/db/index.js`), `ACCESS_TOKEN_SECRET`/`ACCESS_TOKEN_EXPIRY`, `REFRESH_TOKEN_SECRET`/`REFRESH_TOKEN_EXPIRY`, `GROQ_API_KEY`, `GITHUB_TOKEN` (strongly recommended: 60 requests/hour without it), `CORS_ORIGIN`, optional `LLM_MODEL` (default `llama-3.3-70b-versatile`) and `LOG_LEVEL`.
+Environment (`.env`, loaded first thing in `src/index.js`): `PORT`, `MONGODB_URI` (DB name `repolense` is appended in `src/db/index.js`), `ACCESS_TOKEN_SECRET`/`ACCESS_TOKEN_EXPIRY`, `REFRESH_TOKEN_SECRET`/`REFRESH_TOKEN_EXPIRY`, `GROQ_API_KEY`, `GITHUB_TOKEN` (strongly recommended: 60 requests/hour without it), `CORS_ORIGIN`, optional `LLM_MODEL` (default `llama-3.3-70b-versatile`), `LOG_LEVEL`, `RUN_WORKER` (default true), `JOB_CONCURRENCY` (default 1), `VECTOR_SEARCH` (`auto`|`atlas`|`memory`, default `auto`) and `VECTOR_INDEX_NAME`.
 
 ## Architecture
 
@@ -24,19 +26,22 @@ Express 5 + Mongoose ESM API ("RepoLens") that ingests a GitHub repo, analyses i
 - Logging goes through `utils/logger.js` (pino). Never log repository content or prompts.
 
 ### Repo ingestion pipeline
-`controllers/repo.controller.js` `analyseRepo` fetches GitHub metadata, upserts a per-user `Repo` (unique `url + user`), resets progress/errors, returns `201` immediately and starts `runAnalysisPipeline` (`services/analysisPipeline.service.js`) without awaiting it. If an analysis is already running (a stage is `processing` and updated within `STALE_PROCESSING_MS`), it returns the existing repo with `200` instead.
+`controllers/repo.controller.js` `analyseRepo` fetches GitHub metadata, upserts a per-user `Repo` (unique `url + user`), resets progress/errors, returns `201` immediately and enqueues a job (`services/jobQueue.service.js`). If the repo already has a queued or running job, it returns the existing repo with `200` instead (the `Job` model has a partial unique index on `repo` where `active: true`).
 
-Pipeline: `extractFileStructureInternal` → only if it returned `true`, `analyzeRepoWithAIInternal` and `generateEmbeddingsForRepo` run in parallel. If extraction fails, the AI and embedding stages are marked `failed` (never run).
+Job queue (MongoDB-backed, no Redis): a worker (in-process by default, or `npm run worker`) atomically claims the oldest queued job (`findOneAndUpdate`), up to `JOB_CONCURRENCY` at a time, and runs `runAnalysisPipeline`. A running job refreshes `lockedAt` every 30 s; if it goes 2 min without a heartbeat (crash, restart), `requeueStaleJobs` retries it (max 2 attempts) or fails it together with the repo's stages. Startup and the worker loop both run recovery. Graceful shutdown (SIGTERM/SIGINT) stops claiming and waits up to 25 s for running jobs. `getRepoInfo` returns `job: {status, position?, attempts}` while a job is live.
+
+Pipeline (`services/analysisPipeline.service.js`): `extractFileStructureInternal` → only if it returned `true`, `analyzeRepoWithAIInternal` and `generateEmbeddingsForRepo` run in parallel. If extraction fails, the AI and embedding stages are marked `failed` (never run).
 - File extraction (`services/fileStructure.service.js`): one `git.getTree` call for the whole tree (saved on `Repo.fileStructure`), then only files passing `shouldIndexFile` (`utils/fileFilters.js`: no ignored folders, credential files, lockfiles, binaries, files over 200 KB, max 1500 files) are downloaded 8 at a time and stored in `File` with secrets redacted. Re-runs delete old `File`/`Embedding`/`Analysis` documents first.
 - Embeddings (`services/embed.service.js`): 1024-char chunks with 30% overlap, embedded one at a time (batching the model gave no CPU speedup and shifted vectors), written with `insertMany` in batches.
-- Status model on `Repo`: `fileStructureStatus` / `aiStatus` / `embeddingStatus` (pending/processing/ready/failed), `progress.{fileStructure,embedding}` `{done,total}`, and user-safe `statusErrors.{fileStructure,ai,embedding}`. `services/repoStatus.service.js` owns `markStageFailed`, `reportProgress`, `computeProgress` and the stuck-repo sweeper (started in `src/index.js`; fails stages left `processing` after a restart or crash). Progress writes also refresh `updatedAt`, which the sweep and the in-progress guard rely on.
+- Status model on `Repo`: `fileStructureStatus` / `aiStatus` / `embeddingStatus` (pending/processing/ready/failed), `progress.{fileStructure,embedding}` `{done,total}`, and user-safe `statusErrors.{fileStructure,ai,embedding}`. `services/repoStatus.service.js` owns `markStageFailed`, `reportProgress`, `computeProgress` and the stuck-repo sweeper, which fails stages left `processing` only for repos with no live job (the queue owns repos that have one). Progress writes also refresh `updatedAt`, which the sweep and the in-progress guard rely on.
 - The client polls `GET /repository/getRepoInfo/:repoId?info=basicAnalysis|fileStructure|aiAnalysis`, which returns `statuses`, `progress` and `statusErrors`.
 
 ### AI / RAG
 - All LLM calls go through `services/llm.service.js` (`askLLM`: model from `LLM_MODEL`, 45 s timeout, 2 SDK retries). Instructions go in the system message; repository text and user questions are untrusted and must be wrapped with `wrapUntrusted()` (`utils/prompt.js`), which also strips attempts to close the tag.
 - GitHub calls use the shared client in `services/github.client.js` (retry + throttling plugins, 20 s timeout). Tests mock this module.
 - Embeddings use `@xenova/transformers` (`Xenova/all-MiniLM-L6-v2`) via the shared loader in `services/embeddingModel.js`.
-- Chat (`services/chat.service.js`): a local regex decides GREETING / ACKNOWLEDGEMENT (canned replies) vs QUERY. For QUERY it embeds the question, brute-force cosine-scores every `Embedding` of the repo in memory (no vector DB), and sends the top 5 chunks to the LLM. History is stored in the `Chat` model (one document per repo, messages array).
+- Chat (`services/chat.service.js`): a local regex decides GREETING / ACKNOWLEDGEMENT (canned replies) vs QUERY. For QUERY it embeds the question, gets the top 5 chunks from `services/retrieval.service.js`, and sends them to the LLM.
+- Retrieval: uses Atlas `$vectorSearch` (index `embedding_vector_index`, 384 dims, cosine, filter on `repo`) and falls back to a streaming top-k scan in memory when Atlas or the index is unavailable, or when Atlas returns nothing yet (new vectors index asynchronously). After an Atlas error it skips Atlas for 5 minutes. Tests cover the fallback and the pipeline shape, not a real Atlas cluster. History is stored in the `Chat` model (one document per repo, messages array).
 - Analysis output is parsed leniently (`jsonrepair` + sanitising in `services/aiAnalysis.service.js`).
 
 ## Gotchas
