@@ -112,6 +112,30 @@ const analyseRepo = asyncHandler(async (req, res) => {
   });
 
   if (repo) {
+    // An analysis is already running: don't start a second pipeline that
+    // would delete and rebuild the same files/embeddings underneath it.
+    // Statuses older than the window are treated as stuck (e.g. server restart).
+    const IN_PROGRESS_WINDOW_MS = 30 * 60 * 1000;
+    const isRunning = [
+      repo.fileStructureStatus,
+      repo.aiStatus,
+      repo.embeddingStatus,
+    ].includes("processing");
+    if (
+      isRunning &&
+      Date.now() - repo.updatedAt.getTime() < IN_PROGRESS_WINDOW_MS
+    ) {
+      return res
+        .status(200)
+        .json(
+          new ApiResponse(
+            200,
+            { basicInfo: repo },
+            "Analysis for this repository is already in progress."
+          )
+        );
+    }
+
     // Update existing repo
     repo.name = repoData.name;
     repo.owner = owner;

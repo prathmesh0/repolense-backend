@@ -1,51 +1,27 @@
-import { pipeline } from "@xenova/transformers";
 import { Embedding } from "../models/embedding.model.js";
 import { cosineSimilarity } from "../utils/cosineSimilarity.js";
 import Groq from "groq-sdk";
+import { embedText } from "./embeddingModel.js";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-let embeddingModel = null;
 
-async function loadEmbeddingModel() {
-  if (!embeddingModel) {
-    console.log("⏳ Loading embedding model: all-MiniLM-L6-v2 ...");
-    embeddingModel = await pipeline(
-      "feature-extraction",
-      "Xenova/all-MiniLM-L6-v2"
-    );
-    console.log("✅ Embedding model loaded for chat!");
-  }
-  return embeddingModel;
-}
+// Cheap local intent check. This used to be an extra LLM call on every
+// message; anything that isn't purely a greeting or a thank-you is a QUERY.
+const GREETING_RE =
+  /^(hi+|hello+|hey+|hola|yo|sup|greetings|good\s+(morning|afternoon|evening))(\s+(there|repolens|team|everyone))?\s*[!.,]*$/i;
+const ACKNOWLEDGEMENT_RE =
+  /^(ok(ay)?|k|thanks?( you)?|thank you( so much)?|thx|ty|got it|cool|great|nice|awesome|perfect|alright|understood|makes sense)(\s+(thanks?|thank you))?\s*[!.,]*$/i;
 
-async function classifyIntent(userMessage) {
-  const classifyPrompt = `
-You have to classify the following message into one of these intents ONLY: GREETING, ACKNOWLEDGEMENT, QUERY.
-
-Examples of GREETING: hi, hello, hey, greetings
-Examples of ACKNOWLEDGEMENT: ok, thanks, got it, thank you
-Examples of QUERY: all other messages including questions and mixed messages
-
-Message: "${userMessage}"
-
-Return just the intent label in uppercase.
-`;
-
-  const classificationResponse = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
-    messages: [{ role: "user", content: classifyPrompt }],
-  });
-
-  console.log(classificationResponse);
-
-  return classificationResponse.choices[0]?.message?.content
-    ?.trim()
-    .toUpperCase();
+function classifyIntent(userMessage) {
+  const text = userMessage.trim();
+  if (GREETING_RE.test(text)) return "GREETING";
+  if (ACKNOWLEDGEMENT_RE.test(text)) return "ACKNOWLEDGEMENT";
+  return "QUERY";
 }
 
 export const chatWithRepo = async (repoId, question) => {
   // Classify intent first
-  const intent = await classifyIntent(question);
+  const intent = classifyIntent(question);
 
   if (intent === "GREETING") {
     // Static response for greetings
@@ -64,15 +40,14 @@ export const chatWithRepo = async (repoId, question) => {
   }
   // Otherwise treat as QUERY or mixed, run the existing flow
 
-  // Load embedding model
-  const model = await loadEmbeddingModel();
-
   //   Generate Embedding for question
-  const output = await model(question, { pooling: "mean", normalize: true });
-  const queryVector = Array.from(output.data);
+  const queryVector = await embedText(question);
 
   // 3️⃣ Fetch embeddings for this repo
-  const allEmbeddings = await Embedding.find({ repo: repoId });
+  const allEmbeddings = await Embedding.find(
+    { repo: repoId },
+    "path chunkIndex contentPreview vector"
+  ).lean();
   if (!allEmbeddings.length) throw new Error("No embeddings found for repo");
 
   // 4️⃣ Compute similarity scores

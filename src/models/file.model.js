@@ -33,4 +33,6 @@ const fileSchema = new mongoose.Schema(
   }
 );
 
+fileSchema.index({ repo: 1, path: 1 });
+
 export const File = mongoose.model("File", fileSchema);

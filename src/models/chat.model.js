@@ -20,4 +20,6 @@ const chatSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+chatSchema.index({ repo: 1 });
+
 export const Chat = mongoose.model("Chat", chatSchema);
