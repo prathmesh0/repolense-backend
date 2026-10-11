@@ -1,4 +1,5 @@
 import { pipeline } from "@xenova/transformers";
+import { logger } from "../utils/logger.js";
 
 let embeddingModel = null;
 let loading = null;
@@ -10,7 +11,7 @@ async function loadEmbeddingModel() {
   loading ??= pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2")
     .then((model) => {
       embeddingModel = model;
-      console.log("✅ Embedding model loaded");
+      logger.info("✅ Embedding model loaded");
       return model;
     })
     .finally(() => {

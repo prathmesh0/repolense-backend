@@ -4,6 +4,7 @@ import { selectImportantFiles } from "../utils/fileSelector.js";
 import { generateRepoAnalysis } from "./aiAnalysis.service.js";
 import { Analysis } from "../models/analysis.model.js";
 import { markStageFailed } from "./repoStatus.service.js";
+import { logger } from "../utils/logger.js";
 
 async function analyzeRepoWithAIInternal(repoId) {
   try {
@@ -18,10 +19,9 @@ async function analyzeRepoWithAIInternal(repoId) {
     if (!files || files.length === 0) throw new Error("No files for analysis");
 
     const repoContentText = selectImportantFiles(files);
-    console.log("🧠 Selected important files length:", repoContentText.length);
+    logger.info("🧠 Selected important files length:", repoContentText.length);
 
     const analysisData = await generateRepoAnalysis(repoContentText);
-    console.log("✅ AI Response:", analysisData);
 
     // Re-analysis replaces the previous result instead of accumulating
     await Analysis.deleteMany({ repo: repoId });
@@ -40,9 +40,9 @@ async function analyzeRepoWithAIInternal(repoId) {
 
     // 🟢 Mark success
     await Repo.findByIdAndUpdate(repoId, { aiStatus: "ready" });
-    console.log("🎯 AI analysis completed successfully");
+    logger.info("🎯 AI analysis completed successfully");
   } catch (error) {
-    console.error("AI analysis error:", error.message);
+    logger.error("AI analysis error:", error.message);
 
     // 🔴 Mark failure
     await markStageFailed(

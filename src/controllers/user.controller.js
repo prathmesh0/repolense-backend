@@ -5,6 +5,7 @@ import { ApiResponse } from "../utils/apiResponse.js";
 import { Chat } from "../models/chat.model.js";
 import jwt from "jsonwebtoken";
 import Fuse from "fuse.js";
+import { logger } from "../utils/logger.js";
 
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
@@ -17,7 +18,7 @@ const generateAccessAndRefreshTokens = async (userId) => {
 
     return { accessToken, refreshToken };
   } catch (error) {
-    console.error("Error details:", error);
+    logger.error("Error details:", error);
     throw new ApiError(
       500,
       "Something went wrong while generating refresh and access token"

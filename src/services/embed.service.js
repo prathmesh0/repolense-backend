@@ -9,12 +9,13 @@ import {
   reportProgress,
   userFacingError,
 } from "./repoStatus.service.js";
+import { logger } from "../utils/logger.js";
 
 const CHUNK_SIZE = 1024; // chars per chunk
 const CHUNK_OVERLAP = 0.3; // 30% overlap
 const INSERT_BATCH_SIZE = 100; // embeddings per Mongo round trip
 
-function chunkText(text) {
+export function chunkText(text) {
   const step = Math.floor(CHUNK_SIZE * (1 - CHUNK_OVERLAP));
   let chunks = [];
   for (let start = 0; start < text.length; start += step) {
@@ -29,7 +30,7 @@ export async function generateEmbeddingsForRepo(repoId) {
     const repo = await Repo.findById(repoId);
 
     if (!repo) {
-      console.error(`❌ Repo not found for ID: ${repoId}`);
+      logger.error(`❌ Repo not found for ID: ${repoId}`);
       return;
     }
 
@@ -76,7 +77,7 @@ export async function generateEmbeddingsForRepo(repoId) {
       }
     }
     await flush();
-    console.log(`🧬 Embedded ${embeddedFiles} files for repo ${repoId}`);
+    logger.info(`🧬 Embedded ${embeddedFiles} files for repo ${repoId}`);
 
     // Embed Repo-level metadata
     const repoSummary = `
@@ -100,9 +101,9 @@ export async function generateEmbeddingsForRepo(repoId) {
     await reportProgress(repoId, "embedding", totalFiles, totalFiles);
     await Repo.findByIdAndUpdate(repoId, { embeddingStatus: "ready" });
 
-    console.log("✅ All embeddings generated successfully!");
+    logger.info("✅ All embeddings generated successfully!");
   } catch (error) {
-    console.error("❌ Embedding generation error:", error.message);
+    logger.error("❌ Embedding generation error:", error.message);
 
     // 🔴 Mark failure
     await markStageFailed(

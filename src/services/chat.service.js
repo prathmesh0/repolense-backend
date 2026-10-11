@@ -1,9 +1,8 @@
 import { Embedding } from "../models/embedding.model.js";
 import { cosineSimilarity } from "../utils/cosineSimilarity.js";
-import Groq from "groq-sdk";
 import { embedText } from "./embeddingModel.js";
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+import { askLLM } from "./llm.service.js";
+import { UNTRUSTED_NOTICE, wrapUntrusted } from "../utils/prompt.js";
 
 // Cheap local intent check. This used to be an extra LLM call on every
 // message; anything that isn't purely a greeting or a thank-you is a QUERY.
@@ -12,12 +11,19 @@ const GREETING_RE =
 const ACKNOWLEDGEMENT_RE =
   /^(ok(ay)?|k|thanks?( you)?|thank you( so much)?|thx|ty|got it|cool|great|nice|awesome|perfect|alright|understood|makes sense)(\s+(thanks?|thank you))?\s*[!.,]*$/i;
 
-function classifyIntent(userMessage) {
+export function classifyIntent(userMessage) {
   const text = userMessage.trim();
   if (GREETING_RE.test(text)) return "GREETING";
   if (ACKNOWLEDGEMENT_RE.test(text)) return "ACKNOWLEDGEMENT";
   return "QUERY";
 }
+
+const CHAT_SYSTEM_PROMPT = `You are an AI assistant analysing a GitHub repository.
+Answer clearly and concisely in plain English using only the provided repository context (code and metadata).
+If the context does not contain the answer, say you could not find it in the repository instead of guessing.
+If the question concerns code, focus on the most relevant snippets.
+If it concerns metadata (repo name, owner, contributors, languages), use the REPO_METADATA entry.
+${UNTRUSTED_NOTICE}`;
 
 export const chatWithRepo = async (repoId, question) => {
   // Classify intent first
@@ -59,8 +65,6 @@ export const chatWithRepo = async (repoId, question) => {
     score: cosineSimilarity(queryVector, e.vector),
   }));
 
-  // console.log("Scored", scored);
-
   // 5️⃣ Pick top 5
   const top = scored.sort((a, b) => b.score - a.score).slice(0, 5);
   const context = top
@@ -70,30 +74,15 @@ export const chatWithRepo = async (repoId, question) => {
     )
     .join("");
 
-  console.log("context", context);
+  // 6️⃣ Ask the LLM. Instructions live in the system message; repository
+  // text and the question are untrusted data.
+  const answer = await askLLM({
+    system: CHAT_SYSTEM_PROMPT,
+    user: `${wrapUntrusted("repository_content", context)}
 
-  // 6️⃣ Build LLM prompt
-  const prompt = `
-You are an AI assistant analyzing a GitHub repository.
-Use the provided context (code + metadata) to answer clearly and concisely in plain English.
-
-Context:
-${context}
-
-Question: "${question}"
-
-If it concerns code, focus on the most relevant snippets.
-If the question concerns metadata (repo name, owner, contributors, languages), use REPO_METADATA.
-`;
-
-  // 7️⃣ Query Groq
-  const response = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
-    messages: [{ role: "user", content: prompt }],
+${wrapUntrusted("user_question", question)}`,
     temperature: 0.4,
   });
-
-  const answer = response.choices[0]?.message?.content?.trim();
 
   return {
     answer,

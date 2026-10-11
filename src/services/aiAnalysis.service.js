@@ -1,9 +1,9 @@
 // services/aiAnalysis.service.js
-import Groq from "groq-sdk";
 import { ApiError } from "../utils/apiError.js";
 import { jsonrepair } from "jsonrepair";
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+import { askLLM } from "./llm.service.js";
+import { UNTRUSTED_NOTICE, wrapUntrusted } from "../utils/prompt.js";
+import { logger } from "../utils/logger.js";
 
 const betterParseJSON = (text) => {
   try {
@@ -50,7 +50,7 @@ const betterParseJSON = (text) => {
         : [],
     };
   } catch (err) {
-    console.error("Error details:", err);
+    logger.error("Error details:", err);
     // Return fallback (as before)
     return {
       summary: "Parsing failed",
@@ -61,30 +61,27 @@ const betterParseJSON = (text) => {
   }
 };
 
-export const generateRepoAnalysis = async (repoContentText) => {
-  const prompt = `
-Respond ONLY with one valid JSON object, NO extra text, markdown, headers, or multiple blocks.
+const ANALYSIS_SYSTEM_PROMPT = `You analyse source code repositories.
+Respond ONLY with one valid JSON object: no extra text, markdown, headers, or multiple blocks.
+Shape:
 {
   "summary": "...",
   "architecture": "...",
   "complexity": "Low" | "Medium" | "High",
   "potentialIssues": ["...", "..."]
 }
-Repository code:
-${repoContentText}
-`;
+${UNTRUSTED_NOTICE}`;
 
+export const generateRepoAnalysis = async (repoContentText) => {
   try {
-    console.log("⚡ Using Groq: llama-4-maveric");
-    const response = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
+    const text = await askLLM({
+      system: ANALYSIS_SYSTEM_PROMPT,
+      user: wrapUntrusted("repository_content", repoContentText),
       temperature: 0.3,
     });
-    let text = response.choices[0]?.message?.content?.trim();
     return betterParseJSON(text);
   } catch (error) {
-    console.error("❌ Groq failed:", error.message);
+    logger.error("❌ LLM analysis failed:", error.message);
     throw new ApiError(500, "Groq failed to generate AI analysis");
   }
 };
