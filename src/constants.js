@@ -163,3 +163,8 @@ export const textExtensions = [
   ".parquet",
   ".avro",
 ];
+
+// A "processing" repo with no update for this long is considered stuck
+// (e.g. the server restarted mid-analysis). Stages write progress regularly,
+// which keeps healthy runs fresh.
+export const STALE_PROCESSING_MS = 15 * 60 * 1000;

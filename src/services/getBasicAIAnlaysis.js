@@ -3,6 +3,7 @@ import { Repo } from "../models/repo.model.js";
 import { selectImportantFiles } from "../utils/fileSelector.js";
 import { generateRepoAnalysis } from "./aiAnalysis.service.js";
 import { Analysis } from "../models/analysis.model.js";
+import { markStageFailed } from "./repoStatus.service.js";
 
 async function analyzeRepoWithAIInternal(repoId) {
   try {
@@ -44,7 +45,11 @@ async function analyzeRepoWithAIInternal(repoId) {
     console.error("AI analysis error:", error.message);
 
     // 🔴 Mark failure
-    await Repo.findByIdAndUpdate(repoId, { aiStatus: "failed" });
+    await markStageFailed(
+      repoId,
+      "ai",
+      "Could not generate the AI analysis. Please try again."
+    );
   }
 }
 
