@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
@@ -6,7 +7,11 @@ import {
   chatWithRepoStream,
   HISTORY_MAX_MESSAGES,
 } from "../services/chat.service.js";
-import { Chat } from "../models/chat.model.js";
+import {
+  appendMessages,
+  getHistory,
+  getRecentMessages,
+} from "../services/chatHistory.service.js";
 import { logger } from "../utils/logger.js";
 
 const MAX_QUESTION_LENGTH = 2000;
@@ -25,34 +30,15 @@ function readQuestion(req) {
   return question.trim();
 }
 
-// The last few stored messages, oldest first (conversation memory)
-async function loadRecentMessages(repoId) {
-  const chat = await Chat.findOne(
-    { repo: repoId },
-    { messages: { $slice: -HISTORY_MAX_MESSAGES } }
-  ).lean();
-  return chat?.messages ?? [];
-}
+const loadRecentMessages = (repoId) =>
+  getRecentMessages(repoId, HISTORY_MAX_MESSAGES);
 
-// Atomic append, so two messages sent at once cannot overwrite each other
-async function saveExchange(repoId, question, answer) {
-  const chat = await Chat.findOneAndUpdate(
-    { repo: repoId },
-    {
-      $push: {
-        messages: {
-          $each: [
-            { role: "user", content: question },
-            { role: "assistant", content: answer },
-          ],
-        },
-      },
-      $setOnInsert: { repo: repoId },
-    },
-    { upsert: true, new: true }
-  );
-  return chat._id;
-}
+// One exchange = the question and its answer, saved together in order
+const saveExchange = (repoId, question, answer) =>
+  appendMessages(repoId, [
+    { role: "user", content: question },
+    { role: "assistant", content: answer },
+  ]);
 
 const sse = (res, event, data) =>
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -136,24 +122,23 @@ export const chatWithRepoController = asyncHandler(async (req, res) => {
 });
 
 export const getChatHistoryForRepo = asyncHandler(async (req, res) => {
-  const chat = await Chat.findOne({ repo: req.repo._id });
+  const { limit, before } = req.query;
+  if (before !== undefined && !mongoose.isValidObjectId(before)) {
+    throw new ApiError(400, "Invalid 'before' cursor");
+  }
+
+  const history = await getHistory(req.repo._id, { limit, before });
 
   // Reads must not write: return an empty history without creating a chat
-  if (!chat) {
+  if (!history) {
     return res.json(
       new ApiResponse(
         200,
-        { messages: [], chatId: null },
+        { messages: [], chatId: null, hasMore: false },
         "No chat history found"
       )
     );
   }
 
-  return res.json(
-    new ApiResponse(
-      200,
-      { messages: chat.messages, chatId: chat._id },
-      "Chat history fetched"
-    )
-  );
+  return res.json(new ApiResponse(200, history, "Chat history fetched"));
 });

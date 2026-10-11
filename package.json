@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "purge:sensitive": "node scripts/purge-sensitive-data.js",
     "worker": "node src/worker.js",
-    "create:vector-index": "node scripts/create-vector-index.js"
+    "create:vector-index": "node scripts/create-vector-index.js",
+    "migrate:chat": "node scripts/migrate-chat-messages.js"
   },
   "keywords": [
     "git-analyser"

@@ -2,7 +2,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import { User } from "../models/user.model.js";
 import { ApiResponse } from "../utils/apiResponse.js";
-import { Chat } from "../models/chat.model.js";
+import { getChatSummaries } from "../services/chatHistory.service.js";
 import jwt from "jsonwebtoken";
 import Fuse from "fuse.js";
 import { logger } from "../utils/logger.js";
@@ -226,24 +226,21 @@ const getUserRepoHistoryAndChats = asyncHandler(async (req, res) => {
     filteredRepos = results.map((r) => r.item);
   }
 
-  // Fetch chat info for each filtered repo
-  const repoChats = await Promise.all(
-    filteredRepos.map(async (repo) => {
-      const chat = await Chat.findOne({ repo: repo._id });
-      const latestMessage = chat?.messages?.[chat.messages.length - 1];
-
-      return {
-        repoId: repo._id,
-        repoName: repo.name,
-        repoOwner: repo.owner,
-        messagePreview: latestMessage
-          ? { role: latestMessage.role, content: latestMessage.content }
-          : null,
-        chatId: chat?._id ?? null,
-        lastActive: chat?.updatedAt ?? repo.createdAt,
-      };
-    })
-  );
+  // Chat summaries for all repos in one query
+  const summaries = await getChatSummaries(filteredRepos.map((r) => r._id));
+  const repoChats = filteredRepos.map((repo) => {
+    const chat = summaries.get(String(repo._id));
+    return {
+      repoId: repo._id,
+      repoName: repo.name,
+      repoOwner: repo.owner,
+      messagePreview: chat?.lastMessage
+        ? { role: chat.lastMessage.role, content: chat.lastMessage.content }
+        : null,
+      chatId: chat?.chatId ?? null,
+      lastActive: chat?.lastActive ?? repo.createdAt,
+    };
+  });
 
   // Sort repos by last active chat
   repoChats.sort(
@@ -261,7 +258,16 @@ const getUserRepoHistoryAndChats = asyncHandler(async (req, res) => {
   );
 });
 
+// Who am I: the single source of truth for the logged-in state
+const getCurrentUser = asyncHandler(async (req, res) => {
+  const { _id, username, email, createdAt } = req.user;
+  return res.json(
+    new ApiResponse(200, { _id, username, email, createdAt }, "Current user")
+  );
+});
+
 export {
+  getCurrentUser,
   registerUser,
   loginUser,
   logoutUser,

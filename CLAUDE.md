@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run lint` — ESLint with `--fix`; `npm run format` — Prettier write
 - `npm run worker` — standalone job worker (no HTTP). Run the web server with `RUN_WORKER=false` to keep embedding off the request-serving process
 - `npm run create:vector-index` — creates the Atlas vector search index (Atlas only; see Retrieval below)
+- `npm run migrate:chat` — moves old-format chat messages into `ChatMessage` (dry run by default, `-- --apply` to change data; also done lazily by the app)
 - `npm run purge:sensitive` — one-off cleanup of stored credential files/keys (dry run by default, `-- --apply` to change data)
 
 Integration tests start an in-memory MongoDB (`mongodb-memory-server`), which downloads a `mongod` binary on first run. Set `MONGOMS_SYSTEM_BINARY` to reuse an existing one. GitHub is mocked in tests; no network or API keys needed.
@@ -34,6 +35,7 @@ Pipeline (`services/analysisPipeline.service.js`): `extractFileStructureInternal
 - File extraction (`services/fileStructure.service.js`): one `git.getTree` call for the whole tree (saved on `Repo.fileStructure`), then only files passing `shouldIndexFile` (`utils/fileFilters.js`: no ignored folders, credential files, lockfiles, binaries, files over 200 KB, max 1500 files) are downloaded 8 at a time and stored in `File` with secrets redacted. Re-runs delete old `File`/`Embedding`/`Analysis` documents first.
 - Embeddings (`services/embed.service.js`): 1024-char chunks with 30% overlap, embedded one at a time (batching the model gave no CPU speedup and shifted vectors), written with `insertMany` in batches.
 - Status model on `Repo`: `fileStructureStatus` / `aiStatus` / `embeddingStatus` (pending/processing/ready/failed), `progress.{fileStructure,embedding}` `{done,total}`, and user-safe `statusErrors.{fileStructure,ai,embedding}`. `services/repoStatus.service.js` owns `markStageFailed`, `reportProgress`, `computeProgress` and the stuck-repo sweeper, which fails stages left `processing` only for repos with no live job (the queue owns repos that have one). Progress writes also refresh `updatedAt`, which the sweep and the in-progress guard rely on.
+- Progress can also be pushed: `GET /repository/status-stream/:repoId` (SSE, `status` / `done` / `error` events, DB checked every 1.5 s, 15 min cap, 5 streams per user). `GET /users/me` returns the logged-in user.
 - The client polls `GET /repository/getRepoInfo/:repoId?info=basicAnalysis|fileStructure|aiAnalysis`, which returns `statuses`, `progress` and `statusErrors`.
 
 ### AI / RAG
@@ -41,7 +43,7 @@ Pipeline (`services/analysisPipeline.service.js`): `extractFileStructureInternal
 - GitHub calls use the shared client in `services/github.client.js` (retry + throttling plugins, 20 s timeout). Tests mock this module.
 - Embeddings use `@xenova/transformers` (`Xenova/all-MiniLM-L6-v2`) via the shared loader in `services/embeddingModel.js`.
 - Chat (`services/chat.service.js`): a local regex decides GREETING / ACKNOWLEDGEMENT (canned replies) vs QUERY. For QUERY it embeds the question, gets the top 5 chunks from `services/retrieval.service.js`, and sends them to the LLM. The last 6 stored messages are sent as memory (user turns wrapped as untrusted); short follow-ups (under 8 words) are searched together with the previous question. `POST /aiChat/chat/:repoId?stream=true` streams SSE events (`sources`, `token`, `done`, `error`); errors before the model starts are normal JSON. History is saved only after a complete answer.
-- Retrieval: uses Atlas `$vectorSearch` (index `embedding_vector_index`, 384 dims, cosine, filter on `repo`) and falls back to a streaming top-k scan in memory when Atlas or the index is unavailable, or when Atlas returns nothing yet (new vectors index asynchronously). After an Atlas error it skips Atlas for 5 minutes. Tests cover the fallback and the pipeline shape, not a real Atlas cluster. History is stored in the `Chat` model (one document per repo, messages array).
+- Retrieval: uses Atlas `$vectorSearch` (index `embedding_vector_index`, 384 dims, cosine, filter on `repo`) and falls back to a streaming top-k scan in memory when Atlas or the index is unavailable, or when Atlas returns nothing yet (new vectors index asynchronously). After an Atlas error it skips Atlas for 5 minutes. Tests cover the fallback and the pipeline shape, not a real Atlas cluster. History is stored in the `ChatMessage` collection (one document per message; `Chat` is one document per repo with a summary). `services/chatHistory.service.js` owns reads/writes and migrates chats still in the old `messages`-array format on first access.
 - Analysis output is parsed leniently (`jsonrepair` + sanitising in `services/aiAnalysis.service.js`).
 
 ## Gotchas
@@ -49,4 +51,4 @@ Pipeline (`services/analysisPipeline.service.js`): `extractFileStructureInternal
 - Credential-file and secret handling lives in `utils/secrets.js`; use `isSensitivePath` / `redactSecrets` whenever new code stores or sends repo content.
 - `express.json` body limit is 16kb.
 - Prettier on this Windows checkout can rewrite line endings across files; run it only on the files you changed.
-- Phase write-ups with before/after details: `SECURITY_PHASE1.md`, `PERFORMANCE_PHASE2.md`, `STATUS_PHASE3.md`, `CLEANUP_PHASE4.md`, `SCALE_PHASE5.md`, `CHAT_PHASE6.md`. The full backlog is in `IMPROVEMENTS.md`.
+- Phase write-ups with before/after details: `SECURITY_PHASE1.md`, `PERFORMANCE_PHASE2.md`, `STATUS_PHASE3.md`, `CLEANUP_PHASE4.md`, `SCALE_PHASE5.md`, `CHAT_PHASE6.md`, `API_PHASE7.md`. The full backlog is in `IMPROVEMENTS.md`.
