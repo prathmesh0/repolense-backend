@@ -5,6 +5,7 @@ import {
   registerUser,
   refreshAccessToken,
   getUserRepoHistoryAndChats,
+  getCurrentUser,
 } from "../controllers/user.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { authLimiter } from "../middlewares/rateLimit.middleware.js";
@@ -16,6 +17,7 @@ router.route("/login").post(authLimiter, loginUser);
 
 // Secure routes
 router.route("/logout").post(verifyJWT, logoutUser);
+router.route("/me").get(verifyJWT, getCurrentUser);
 router.route("/repo-history").get(verifyJWT, getUserRepoHistoryAndChats);
 router.route("/refresh-token").post(authLimiter, refreshAccessToken);
 

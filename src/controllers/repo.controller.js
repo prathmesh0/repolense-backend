@@ -11,7 +11,7 @@ import {
 } from "../services/jobQueue.service.js";
 import { computeProgress } from "../services/repoStatus.service.js";
 import { Analysis } from "../models/analysis.model.js";
-import { Chat } from "../models/chat.model.js";
+import { appendMessages } from "../services/chatHistory.service.js";
 import { logger } from "../utils/logger.js";
 
 const parseRepoUrl = (url) => {
@@ -324,10 +324,6 @@ const getRepoInfo = asyncHandler(async (req, res) => {
     }
   }
 
-  let chat = await Chat.findOne({ repo: repoId });
-  if (!chat) chat = await Chat.create({ repo: repoId, messages: [] });
-
-  chat.messages.push({ role: "user", content: userRequestLabel });
 
   // Decide what assistant message to push based on content presence and status
   let assistantContent = "";
@@ -348,11 +344,10 @@ const getRepoInfo = asyncHandler(async (req, res) => {
     assistantContent = JSON.stringify(responseData, null, 2); // full data
   }
 
-  chat.messages.push({
-    role: "assistant",
-    content: assistantContent,
-  });
-  await chat.save();
+  await appendMessages(repoId, [
+    { role: "user", content: userRequestLabel },
+    { role: "assistant", content: assistantContent },
+  ]);
 
   return res.status(200).json(new ApiResponse(200, responseData, message));
 });

@@ -28,6 +28,7 @@ vi.mock("../../src/services/retrieval.service.js", () => ({
 
 import { app } from "../../src/app.js";
 import { Chat } from "../../src/models/chat.model.js";
+import { ChatMessage } from "../../src/models/chatMessage.model.js";
 import { Repo } from "../../src/models/repo.model.js";
 import { User } from "../../src/models/user.model.js";
 import { clearTestDb, startTestDb, stopTestDb } from "../helpers/db.js";
@@ -69,6 +70,11 @@ const parseSse = (text) =>
         data: JSON.parse(data.replace("data: ", "")),
       };
     });
+
+const stored = async (repoId) =>
+  (await ChatMessage.find({ repo: repoId }).sort({ _id: 1 }).lean()).map(
+    (m) => m.content
+  );
 
 async function* tokens(...parts) {
   for (const p of parts) yield p;
@@ -113,8 +119,7 @@ describe("chat memory", () => {
       { role: "assistant", content: "first answer" },
     ]);
 
-    const chat = await Chat.findOne({ repo: repo._id }).lean();
-    expect(chat.messages.map((m) => m.content)).toEqual([
+    expect(await stored(repo._id)).toEqual([
       "How does login work in this project?",
       "first answer",
       "explain more",
@@ -143,18 +148,20 @@ describe("chat memory", () => {
 
   it("only sends the most recent turns", async () => {
     const { repo, headers } = await setup();
-    await Chat.create({
-      repo: repo._id,
-      messages: Array.from({ length: 20 }, (_, i) => ({
+    await ChatMessage.insertMany(
+      Array.from({ length: 20 }, (_, i) => ({
+        repo: repo._id,
         role: i % 2 ? "assistant" : "user",
         content: `m${i}`,
-      })),
-    });
+      }))
+    );
 
     await request(app)
       .post(`${API}/chat/${repo._id}`)
       .set(headers)
-      .send({ question: "a fresh and fairly long question about routing here" });
+      .send({
+        question: "a fresh and fairly long question about routing here",
+      });
 
     const history = mocks.askLLM.mock.calls[0][0].history;
     expect(history).toHaveLength(6);
@@ -195,7 +202,7 @@ describe("streaming chat", () => {
     expect(streamed).toBe("Hello there");
 
     const chat = await Chat.findOne({ repo: repo._id }).lean();
-    expect(chat.messages.map((m) => m.content)).toEqual([
+    expect(await stored(repo._id)).toEqual([
       "How does login work?",
       "Hello there",
     ]);
@@ -221,7 +228,7 @@ describe("streaming chat", () => {
 
     expect(res.status).toBe(500);
     expect(res.headers["content-type"]).toMatch(/json/);
-    expect(await Chat.countDocuments({})).toBe(0);
+    expect(await ChatMessage.countDocuments({})).toBe(0);
   });
 
   it("reports a failure mid-stream as an error event and saves nothing", async () => {
@@ -236,7 +243,7 @@ describe("streaming chat", () => {
 
     expect(events.at(-1).event).toBe("error");
     expect(events.at(-1).data.message).not.toMatch(/groq|secret/i);
-    expect(await Chat.countDocuments({})).toBe(0);
+    expect(await ChatMessage.countDocuments({})).toBe(0);
   });
 
   it("still enforces ownership", async () => {
