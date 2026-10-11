@@ -40,7 +40,7 @@ Pipeline (`services/analysisPipeline.service.js`): `extractFileStructureInternal
 - All LLM calls go through `services/llm.service.js` (`askLLM`: model from `LLM_MODEL`, 45 s timeout, 2 SDK retries). Instructions go in the system message; repository text and user questions are untrusted and must be wrapped with `wrapUntrusted()` (`utils/prompt.js`), which also strips attempts to close the tag.
 - GitHub calls use the shared client in `services/github.client.js` (retry + throttling plugins, 20 s timeout). Tests mock this module.
 - Embeddings use `@xenova/transformers` (`Xenova/all-MiniLM-L6-v2`) via the shared loader in `services/embeddingModel.js`.
-- Chat (`services/chat.service.js`): a local regex decides GREETING / ACKNOWLEDGEMENT (canned replies) vs QUERY. For QUERY it embeds the question, gets the top 5 chunks from `services/retrieval.service.js`, and sends them to the LLM.
+- Chat (`services/chat.service.js`): a local regex decides GREETING / ACKNOWLEDGEMENT (canned replies) vs QUERY. For QUERY it embeds the question, gets the top 5 chunks from `services/retrieval.service.js`, and sends them to the LLM. The last 6 stored messages are sent as memory (user turns wrapped as untrusted); short follow-ups (under 8 words) are searched together with the previous question. `POST /aiChat/chat/:repoId?stream=true` streams SSE events (`sources`, `token`, `done`, `error`); errors before the model starts are normal JSON. History is saved only after a complete answer.
 - Retrieval: uses Atlas `$vectorSearch` (index `embedding_vector_index`, 384 dims, cosine, filter on `repo`) and falls back to a streaming top-k scan in memory when Atlas or the index is unavailable, or when Atlas returns nothing yet (new vectors index asynchronously). After an Atlas error it skips Atlas for 5 minutes. Tests cover the fallback and the pipeline shape, not a real Atlas cluster. History is stored in the `Chat` model (one document per repo, messages array).
 - Analysis output is parsed leniently (`jsonrepair` + sanitising in `services/aiAnalysis.service.js`).
 
@@ -49,4 +49,4 @@ Pipeline (`services/analysisPipeline.service.js`): `extractFileStructureInternal
 - Credential-file and secret handling lives in `utils/secrets.js`; use `isSensitivePath` / `redactSecrets` whenever new code stores or sends repo content.
 - `express.json` body limit is 16kb.
 - Prettier on this Windows checkout can rewrite line endings across files; run it only on the files you changed.
-- Phase write-ups with before/after details: `SECURITY_PHASE1.md`, `PERFORMANCE_PHASE2.md`, `STATUS_PHASE3.md`, `CLEANUP_PHASE4.md`. The full backlog is in `IMPROVEMENTS.md`.
+- Phase write-ups with before/after details: `SECURITY_PHASE1.md`, `PERFORMANCE_PHASE2.md`, `STATUS_PHASE3.md`, `CLEANUP_PHASE4.md`, `SCALE_PHASE5.md`, `CHAT_PHASE6.md`. The full backlog is in `IMPROVEMENTS.md`.
