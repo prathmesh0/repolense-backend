@@ -1,11 +1,9 @@
-import dotenv from "dotenv";
+// Must be first: loads .env before any other module reads process.env
+import "dotenv/config";
 import connectDB from "./db/index.js";
 import { app } from "./app.js";
 import { startStatusSweeper } from "./services/repoStatus.service.js";
-
-dotenv.config({
-  path: "./.env",
-});
+import { logger } from "./utils/logger.js";
 
 connectDB()
   .then(() => {
@@ -13,9 +11,9 @@ connectDB()
     startStatusSweeper();
 
     app.listen(process.env.PORT || 8000, () => {
-      console.log(`Server is running at port : ${process.env.PORT}`);
+      logger.info(`Server is running at port : ${process.env.PORT}`);
     });
   })
   .catch((error) => {
-    console.error("MongoDD connection Failed !!", error);
+    logger.error("MongoDD connection Failed !!", error);
   });

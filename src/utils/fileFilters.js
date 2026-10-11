@@ -20,12 +20,30 @@ const hasTextExtension = (path) => {
 
 // Single source of truth: used both to decide what to download from GitHub
 // and what to embed.
+// Machine-generated dependency locks: huge, repetitive, and useless as chat context
+const LOCKFILE_NAMES = new Set([
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "npm-shrinkwrap.json",
+  "bun.lockb",
+  "composer.lock",
+  "gemfile.lock",
+  "poetry.lock",
+  "pipfile.lock",
+  "cargo.lock",
+  "go.sum",
+  "pubspec.lock",
+]);
+
 export function shouldIndexFile(
   filePath,
   fileName = filePath.split("/").pop()
 ) {
   // Never index credential files, even if they are "important" root files
   if (isSensitivePath(filePath)) return false;
+
+  if (LOCKFILE_NAMES.has(fileName.toLowerCase())) return false;
 
   // Always index important root files located at root (no slashes)
   if (

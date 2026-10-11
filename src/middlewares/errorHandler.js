@@ -1,8 +1,9 @@
 /* eslint-disable no-unused-vars */
 import { ApiError } from "../utils/apiError.js";
+import { logger } from "../utils/logger.js";
 
 export const errorHandler = (err, req, res, next) => {
-  console.error(err);
+  logger.error(err);
 
   if (err instanceof ApiError) {
     return res.status(err.statusCode || 500).json({

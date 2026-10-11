@@ -1,6 +1,6 @@
 import { Repo } from "../models/repo.model.js";
 import { File } from "../models/file.model.js";
-import { Octokit } from "@octokit/rest";
+import { octokit } from "./github.client.js";
 import { redactSecrets } from "../utils/secrets.js";
 import {
   markStageFailed,
@@ -12,8 +12,7 @@ import {
   MAX_FILES_TO_FETCH,
   shouldIndexFile,
 } from "../utils/fileFilters.js";
-
-const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN || null });
+import { logger } from "../utils/logger.js";
 
 const BLOB_CONCURRENCY = 8;
 const INSERT_BATCH_SIZE = 200;
@@ -90,7 +89,7 @@ async function extractFileStructureInternal(repoId, owner, name) {
       recursive: "1",
     });
     if (tree.truncated) {
-      console.warn(
+      logger.warn(
         `⚠️ Git tree truncated for ${owner}/${name}; very large repo`
       );
     }
@@ -141,7 +140,7 @@ async function extractFileStructureInternal(repoId, owner, name) {
           };
         } catch (error) {
           // One unreadable file shouldn't fail the whole repo
-          console.error(`Error fetching file ${entry.path}:`, error.message);
+          logger.error(`Error fetching file ${entry.path}:`, error.message);
           return null;
         }
       },
@@ -168,14 +167,14 @@ async function extractFileStructureInternal(repoId, owner, name) {
         ordered: false,
       });
     }
-    console.log(
+    logger.info(
       `📁 Stored ${docs.length}/${candidates.length} files for ${owner}/${name}`
     );
 
     await Repo.findByIdAndUpdate(repoId, { fileStructureStatus: "ready" });
     return true;
   } catch (error) {
-    console.error("File structure extraction error:", error.message);
+    logger.error("File structure extraction error:", error.message);
 
     // 🔴 Mark failure
     await markStageFailed(

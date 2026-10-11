@@ -1,5 +1,5 @@
 import { Repo } from "../models/repo.model.js";
-import { Octokit } from "@octokit/rest";
+import { octokit } from "../services/github.client.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
@@ -9,10 +9,7 @@ import { computeProgress } from "../services/repoStatus.service.js";
 import { STALE_PROCESSING_MS } from "../constants.js";
 import { Analysis } from "../models/analysis.model.js";
 import { Chat } from "../models/chat.model.js";
-
-const octokit = new Octokit({
-  auth: process.env.GITHUB_TOKEN || null,
-});
+import { logger } from "../utils/logger.js";
 
 const parseRepoUrl = (url) => {
   try {
@@ -22,7 +19,7 @@ const parseRepoUrl = (url) => {
     if (!match) return null;
     return { owner: match[1], name: match[2], url: normalizedUrl };
   } catch (error) {
-    console.error("Error details:", error);
+    logger.error("Error details:", error);
     throw new ApiError(401, "Error parsing GitHub URL");
   }
 };
@@ -101,7 +98,7 @@ const analyseRepo = asyncHandler(async (req, res) => {
     }
   } catch (err) {
     totalCommits = 0; // safe fallback
-    console.warn("Could not fetch commits:", err.message);
+    logger.warn("Could not fetch commits:", err.message);
   }
 
   // Find/create repo per-user to avoid cross-user sharing

@@ -2,13 +2,16 @@
   "name": "repolens-backend",
   "version": "1.0.0",
   "description": "Application to analyse the github repository",
-  "main": "index.js",
+  "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
+    "start": "node src/index.js",
     "dev": "nodemon -r dotenv/config --experimental-json-modules src/index.js",
     "lint": "eslint . --ext .js --fix",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "purge:sensitive": "node scripts/purge-sensitive-data.js"
   },
   "keywords": [
     "git-analyser"
@@ -16,6 +19,8 @@
   "author": "prathmesh parab",
   "license": "ISC",
   "dependencies": {
+    "@octokit/plugin-retry": "^8.1.1",
+    "@octokit/plugin-throttling": "^11.0.5",
     "@octokit/rest": "^22.0.0",
     "@xenova/transformers": "^2.17.2",
     "bcrypt": "^6.0.0",
@@ -31,7 +36,8 @@
     "micromatch": "^4.0.8",
     "mongoose": "^8.18.1",
     "mongoose-aggregate-paginate-v2": "^1.1.4",
-    "ollama": "^0.6.0"
+    "ollama": "^0.6.0",
+    "pino": "^10.4.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
@@ -39,7 +45,11 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
     "globals": "^16.5.0",
+    "mongodb-memory-server": "^11.3.0",
     "nodemon": "^3.1.10",
-    "prettier": "^3.6.2"
+    "pino-pretty": "^13.2.0",
+    "prettier": "^3.6.2",
+    "supertest": "^7.3.1",
+    "vitest": "^5.0.3"
   }
 }

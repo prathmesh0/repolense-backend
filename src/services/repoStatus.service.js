@@ -1,5 +1,6 @@
 import { Repo } from "../models/repo.model.js";
 import { STALE_PROCESSING_MS } from "../constants.js";
+import { logger } from "../utils/logger.js";
 
 // stage name -> Repo status field
 export const STAGES = {
@@ -42,7 +43,7 @@ export async function reportProgress(repoId, stage, done, total) {
       { $set: { [`progress.${stage}`]: { done, total } } }
     );
   } catch (error) {
-    console.warn(`Could not save ${stage} progress:`, error.message);
+    logger.warn(`Could not save ${stage} progress:`, error.message);
   }
 }
 
@@ -77,7 +78,7 @@ export async function sweepStuckRepos(maxAgeMs) {
     { _id: { $in: stuck.map((r) => r._id) } },
     INTERRUPTED_MESSAGE
   );
-  if (count) console.warn(`🧹 Marked ${count} stuck stage(s) as failed`);
+  if (count) logger.warn(`🧹 Marked ${count} stuck stage(s) as failed`);
   return count;
 }
 
@@ -86,14 +87,14 @@ export function startStatusSweeper() {
   // On boot, in-process work from the previous run is gone. The short window
   // avoids touching a run an overlapping instance may still be doing.
   sweepStuckRepos(2 * 60 * 1000).catch((e) =>
-    console.error("Startup sweep failed:", e.message)
+    logger.error("Startup sweep failed:", e.message)
   );
 
   // Catches runs that die without a restart
   setInterval(
     () =>
       sweepStuckRepos(STALE_PROCESSING_MS).catch((e) =>
-        console.error("Status sweep failed:", e.message)
+        logger.error("Status sweep failed:", e.message)
       ),
     5 * 60 * 1000
   ).unref();
