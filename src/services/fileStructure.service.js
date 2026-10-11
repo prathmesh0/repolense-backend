@@ -2,6 +2,7 @@ import { Repo } from "../models/repo.model.js";
 import { File } from "../models/file.model.js";
 import { ApiError } from "../utils/apiError.js";
 import { Octokit } from "@octokit/rest";
+import { isSensitivePath, redactSecrets } from "../utils/secrets.js";
 
 const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN || null });
 
@@ -47,18 +48,24 @@ const fetchContentsRecursive = async (owner, repoName, path = "") => {
 const saveFilesRecursive = async (node, repoId, owner, repoName) => {
   if (node.type === "file") {
     let content = "";
-    try {
-      const { data } = await octokit.repos.getContent({
-        owner,
-        repo: repoName,
-        path: node.path,
-      });
-      if (data && data.content && data.encoding === "base64") {
-        content = Buffer.from(data.content, "base64").toString("utf8");
+    // Credential files stay in the tree, but their content is never
+    // downloaded, stored, embedded, or sent to the LLM.
+    if (!isSensitivePath(node.path)) {
+      try {
+        const { data } = await octokit.repos.getContent({
+          owner,
+          repo: repoName,
+          path: node.path,
+        });
+        if (data && data.content && data.encoding === "base64") {
+          content = redactSecrets(
+            Buffer.from(data.content, "base64").toString("utf8")
+          );
+        }
+      } catch (error) {
+        console.error(`Error fetching file ${node.path}:`, error.message);
+        throw new ApiError(500, "Error in fetching file");
       }
-    } catch (error) {
-      console.error(`Error fetching file ${node.path}:`, error.message);
-      throw new ApiError(500, "Error in fetching file");
     }
 
     await File.create({
@@ -91,7 +98,6 @@ async function extractFileStructureInternal(repoId, owner, name) {
 
     // 🔴 Mark failure
     await Repo.findByIdAndUpdate(repoId, { fileStructureStatus: "failed" });
-    
   }
 }
 

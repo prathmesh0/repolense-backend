@@ -4,14 +4,25 @@ import { ApiResponse } from "../utils/apiResponse.js";
 import { chatWithRepo } from "../services/chat.service.js";
 import { Chat } from "../models/chat.model.js";
 
+const MAX_QUESTION_LENGTH = 2000;
+
+// Both handlers run after requireOwnedRepo, so req.repo belongs to the user
 export const chatWithRepoController = asyncHandler(async (req, res) => {
-  const { repoId } = req.params;
+  const repoId = req.repo._id;
   const { question } = req.body;
 
-  if (!question) throw new ApiError(400, "Question is required");
+  if (typeof question !== "string" || !question.trim()) {
+    throw new ApiError(400, "Question is required");
+  }
+  if (question.length > MAX_QUESTION_LENGTH) {
+    throw new ApiError(
+      400,
+      `Question must be at most ${MAX_QUESTION_LENGTH} characters`
+    );
+  }
 
   //   Run chat Service
-  const { answer, sources } = await chatWithRepo(repoId, question);
+  const { answer, sources } = await chatWithRepo(repoId, question.trim());
 
   //   Save to chat history
   let chat = await Chat.findOne({ repo: repoId });
@@ -33,16 +44,15 @@ export const chatWithRepoController = asyncHandler(async (req, res) => {
 });
 
 export const getChatHistoryForRepo = asyncHandler(async (req, res) => {
-  const { repoId } = req.params;
-  let chat = await Chat.findOne({ repo: repoId });
-  // ✅ If no chat found, create new one with empty messages
+  const chat = await Chat.findOne({ repo: req.repo._id });
+
+  // Reads must not write: return an empty history without creating a chat
   if (!chat) {
-    chat = await Chat.create({ repo: repoId, messages: [] });
     return res.json(
       new ApiResponse(
         200,
-        { messages: [], chatId: chat._id },
-        "No chat history found; new chat created"
+        { messages: [], chatId: null },
+        "No chat history found"
       )
     );
   }

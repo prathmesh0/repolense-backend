@@ -1,24 +1,28 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import { globalLimiter } from "./middlewares/rateLimit.middleware.js";
+
+// Exact origins only. Wildcards like "*.vercel.app" would also match
+// anyone else's Vercel deployment.
 const allowedOrigins = [
   process.env.CORS_ORIGIN,
   "https://repolens-frontend.vercel.app",
-];
+  "http://localhost:3000",
+].filter(Boolean);
 
 const app = express();
+
+// Behind a hosting proxy; needed so rate limiting sees the real client IP
+app.set("trust proxy", 1);
 
 app.use(
   cors({
     origin: (origin, callback) => {
+      // Non-browser clients (curl, server-to-server) send no Origin header
       if (!origin) return callback(null, true);
 
-      const allowed =
-        origin === "https://repolens-frontend.vercel.app" ||
-        origin.endsWith(".vercel.app") ||
-        "http://localhost:3000";
-
-      if (allowed) {
+      if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS"));
@@ -27,6 +31,8 @@ app.use(
     credentials: true,
   })
 );
+
+app.use(globalLimiter);
 
 app.use(
   express.json({
