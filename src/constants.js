@@ -61,7 +61,6 @@ export const IMPORTANT_ROOT_FILES = [
   "environment.yml",
   "go.mod",
   "go.sum",
-  ".env",
   ".env.example",
   ".gitignore",
   "pubspec.yaml", // Flutter/Dart
@@ -130,7 +129,6 @@ export const textExtensions = [
   ".yaml",
   ".toml",
   ".ini",
-  ".env",
   ".xml",
   ".csv",
   ".tsv",

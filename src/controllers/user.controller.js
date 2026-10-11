@@ -29,8 +29,11 @@ const registerUser = asyncHandler(async (req, res) => {
   //   get user details from frontend
   const { username, email, password } = req.body;
   //   validation
+  // typeof check also blocks NoSQL operator objects like { "$ne": "" }
   if (
-    [username, email, password].some((field) => !field || field.trim() === "")
+    [username, email, password].some(
+      (field) => typeof field !== "string" || field.trim() === ""
+    )
   ) {
     throw new ApiError(400, "All fields is required");
   }
@@ -66,8 +69,11 @@ const loginUser = asyncHandler(async (req, res) => {
   // req body
   const { email, password } = req.body;
   // email
-  if (!email) {
+  if (typeof email !== "string" || !email.trim()) {
     throw new ApiError(400, "Email is required");
+  }
+  if (typeof password !== "string" || !password) {
+    throw new ApiError(400, "Password is required");
   }
 
   // find the user
@@ -91,7 +97,7 @@ const loginUser = asyncHandler(async (req, res) => {
   );
 
   const options = {
-    httpsOnly: true,
+    httpOnly: true,
     secure: true,
   };
 
@@ -126,7 +132,7 @@ const logoutUser = asyncHandler(async (req, res) => {
   );
 
   const options = {
-    httpsOnly: true,
+    httpOnly: true,
     secure: true,
   };
 

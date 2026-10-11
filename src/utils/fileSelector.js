@@ -1,3 +1,5 @@
+import { isSensitivePath, redactSecrets } from "./secrets.js";
+
 export function selectImportantFiles(files, maxChars = 8000) {
   // Priority Order
   const priorityPatterns = [
@@ -31,9 +33,9 @@ export function selectImportantFiles(files, maxChars = 8000) {
   // Merge with cutoff
   let collected = "";
   for (const f of [...important, ...rest]) {
-    if (!f.content) continue;
+    if (!f.content || isSensitivePath(f.path)) continue;
 
-    const snippet = `\n--- FILE: ${f.path} ---\n${f.content}\n`;
+    const snippet = `\n--- FILE: ${f.path} ---\n${redactSecrets(f.content)}\n`;
     if (collected.length + snippet.length > maxChars) break;
 
     collected += snippet;

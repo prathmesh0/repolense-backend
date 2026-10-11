@@ -3,6 +3,7 @@ import { Embedding } from "../models/embedding.model.js";
 import { File } from "../models/file.model.js";
 import { Repo } from "../models/repo.model.js";
 import micromatch from "micromatch";
+import { isSensitivePath, redactSecrets } from "../utils/secrets.js";
 import {
   IMPORTANT_ROOT_FILES,
   IGNORED_PATHS,
@@ -13,6 +14,9 @@ const CHUNK_SIZE = 1024; // chars per chunk
 const CHUNK_OVERLAP = 0.3; // 30% overlap
 
 function shouldEmbedFile(filePath, fileName, repoRoot = "") {
+  // Never embed credential files, even if they are "important" root files
+  if (isSensitivePath(filePath)) return false;
+
   // Normalize path relative to repoRoot if given
   let relPath =
     repoRoot && filePath.startsWith(repoRoot)
@@ -87,7 +91,8 @@ export async function generateEmbeddingsForRepo(repoId) {
       )
         continue;
 
-      const chunks = chunkText(file.content);
+      // Also covers files stored before redaction existed
+      const chunks = chunkText(redactSecrets(file.content));
       console.log("Chunks Lenght/ Database call", chunks.length);
 
       for (let idx = 0; idx < chunks.length; idx++) {
