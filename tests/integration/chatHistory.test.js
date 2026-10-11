@@ -9,7 +9,9 @@ import { Repo } from "../../src/models/repo.model.js";
 import { User } from "../../src/models/user.model.js";
 import {
   appendMessages,
+  isFakeMessage,
   migrateLegacyChat,
+  purgeFakeMessages,
 } from "../../src/services/chatHistory.service.js";
 import { clearTestDb, startTestDb, stopTestDb } from "../helpers/db.js";
 
@@ -119,13 +121,20 @@ describe("chat history storage", () => {
     expect(bad.status).toBe(400);
   });
 
-  it("getRepoInfo still records its messages, now in the new collection", async () => {
+  it("getRepoInfo no longer writes anything to the chat", async () => {
     const { repo, headers } = await setup();
-    const res = await request(app)
-      .get(`${API}/repository/getRepoInfo/${repo._id}?info=basicAnalysis`)
+    for (const info of ["basicAnalysis", "fileStructure", "aiAnalysis"]) {
+      const res = await request(app)
+        .get(`${API}/repository/getRepoInfo/${repo._id}?info=${info}`)
+        .set(headers);
+      expect(res.status).toBe(200);
+    }
+    const all = await request(app)
+      .get(`${API}/repository/getRepoInfo/${repo._id}`)
       .set(headers);
-    expect(res.status).toBe(200);
-    expect(await ChatMessage.countDocuments({ repo: repo._id })).toBe(2);
+    expect(all.status).toBe(200);
+    expect(await ChatMessage.countDocuments({})).toBe(0);
+    expect(await Chat.countDocuments({})).toBe(0);
   });
 });
 
@@ -339,5 +348,53 @@ describe("GET /repository/status-stream/:repoId", () => {
       `${API}/repository/status-stream/${repo._id}`
     );
     expect(anon.status).toBe(401);
+  });
+});
+
+describe("purge of old fake messages", () => {
+  it("removes label and dump messages, keeps real conversation, fixes the summary", async () => {
+    const { repo } = await setup();
+    await appendMessages(repo._id, [
+      { role: "user", content: "How does login work?" },
+      { role: "assistant", content: "It uses JWT." },
+    ]);
+    await appendMessages(repo._id, [
+      { role: "user", content: "AI Analysis" },
+      {
+        role: "assistant",
+        content: JSON.stringify({ aiAnalysis: { summary: "x" } }, null, 2),
+      },
+    ]);
+    await appendMessages(repo._id, [
+      { role: "user", content: "Get File Structure" },
+      {
+        role: "assistant",
+        content:
+          "File structure extraction is still in progress. Please check back shortly.",
+      },
+    ]);
+
+    const dry = await purgeFakeMessages({ apply: false });
+    expect(dry).toMatchObject({ scanned: 6, fake: 4, chats: 1 });
+    expect(await ChatMessage.countDocuments({})).toBe(6);
+
+    await purgeFakeMessages({ apply: true });
+    const left = await ChatMessage.find({}).sort({ _id: 1 }).lean();
+    expect(left.map((m) => m.content)).toEqual([
+      "How does login work?",
+      "It uses JWT.",
+    ]);
+    const chat = await Chat.findOne({ repo: repo._id }).lean();
+    expect(chat.messageCount).toBe(2);
+    expect(chat.lastMessage.content).toBe("It uses JWT.");
+  });
+
+  it("does not treat a real answer that mentions JSON as fake", () => {
+    expect(
+      isFakeMessage({ role: "assistant", content: 'The config is { "a": 1 }' })
+    ).toBe(false);
+    expect(
+      isFakeMessage({ role: "user", content: "What is AI Analysis?" })
+    ).toBe(false);
   });
 });
