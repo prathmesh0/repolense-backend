@@ -1,7 +1,7 @@
 import Groq from "groq-sdk";
 
 // Single place for the model name and client settings
-export const LLM_MODEL = process.env.LLM_MODEL || "llama-3.3-70b-versatile";
+export const LLM_MODEL = process.env.LLM_MODEL || "openai/gpt-oss-120b";
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
