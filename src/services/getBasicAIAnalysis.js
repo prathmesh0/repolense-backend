@@ -21,6 +21,16 @@ async function analyzeRepoWithAIInternal(repoId) {
     const repoContentText = selectImportantFiles(files);
     logger.info("🧠 Selected important files length:", repoContentText.length);
 
+    // Never ask the model to analyse nothing (it would answer "no content")
+    if (!repoContentText.trim()) {
+      await markStageFailed(
+        repoId,
+        "ai",
+        "No readable source files were found to analyse."
+      );
+      return;
+    }
+
     const analysisData = await generateRepoAnalysis(repoContentText);
 
     // Re-analysis replaces the previous result instead of accumulating
