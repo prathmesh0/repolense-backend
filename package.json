@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "purge:sensitive": "node scripts/purge-sensitive-data.js",
     "worker": "node src/worker.js",
+    "seed:samples": "node scripts/seed-sample-repos.js",
     "create:vector-index": "node scripts/create-vector-index.js",
     "migrate:chat": "node scripts/migrate-chat-messages.js",
     "purge:fake-chat": "node scripts/purge-fake-chat-messages.js"

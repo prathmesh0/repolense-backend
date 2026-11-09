@@ -19,6 +19,8 @@ const jobSchema = new Schema(
     // true while queued or running; lets the database enforce "one live job
     // per repo" through a partial unique index
     active: { type: Boolean, default: true },
+    // lower runs first; demo guests use 1 so real users are never starved
+    priority: { type: Number, default: 0 },
     attempts: { type: Number, default: 0 },
     maxAttempts: { type: Number, default: 2 },
     runAt: { type: Date, default: Date.now },
@@ -32,7 +34,7 @@ const jobSchema = new Schema(
   { timestamps: true }
 );
 
-jobSchema.index({ status: 1, runAt: 1 });
+jobSchema.index({ status: 1, priority: 1, runAt: 1 });
 jobSchema.index(
   { repo: 1 },
   { unique: true, partialFilterExpression: { active: true } }

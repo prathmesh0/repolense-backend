@@ -62,11 +62,16 @@ export async function migrateLegacyChat(rawChat, { apply = true } = {}) {
 
 // The chat document for a repo, creating it if needed. Chats still in the
 // old format are migrated first, so callers never see the difference.
-async function getOrCreateChat(repoId) {
-  let chat = await Chat.collection.findOne(
-    { repo: repoId },
-    { sort: { _id: 1 } }
-  );
+//
+// `userId` is only passed for shared sample repos, where each guest has a chat
+// of their own. For a user's own repo it stays null and the chat is the
+// repo's single chat, exactly as before.
+const scope = (repoId, userId) => (userId ? { repo: repoId, user: userId } : { repo: repoId });
+
+async function getOrCreateChat(repoId, userId = null) {
+  let chat = await Chat.collection.findOne(scope(repoId, userId), {
+    sort: { _id: 1 },
+  });
   if (chat && Array.isArray(chat.messages)) {
     await migrateLegacyChat(chat);
     logger.info("Migrated legacy chat %s", String(chat._id));
@@ -74,8 +79,8 @@ async function getOrCreateChat(repoId) {
   }
   if (!chat) {
     chat = await Chat.findOneAndUpdate(
-      { repo: repoId },
-      { $setOnInsert: { repo: repoId, createdAt: new Date() } },
+      scope(repoId, userId),
+      { $setOnInsert: { ...scope(repoId, userId), createdAt: new Date() } },
       { upsert: true, new: true }
     ).lean();
   }
@@ -83,12 +88,13 @@ async function getOrCreateChat(repoId) {
 }
 
 // Adds messages in order and refreshes the chat summary. Returns the chat id.
-export async function appendMessages(repoId, messages) {
-  const chat = await getOrCreateChat(repoId);
+export async function appendMessages(repoId, messages, userId = null) {
+  const chat = await getOrCreateChat(repoId, userId);
   const now = Date.now();
   const docs = await ChatMessage.insertMany(
     messages.map((m, i) => ({
       repo: repoId,
+      ...(userId ? { user: userId } : {}),
       role: m.role,
       content: m.content,
       createdAt: new Date(now + i), // keeps order stable within one call
@@ -112,11 +118,10 @@ export async function appendMessages(repoId, messages) {
 
 // Newest `limit` messages, oldest first. `before` (a message id) pages
 // backwards. Returns { messages, chatId, hasMore } or null if no chat exists.
-export async function getHistory(repoId, { limit, before } = {}) {
-  const chat = await Chat.collection.findOne(
-    { repo: repoId },
-    { sort: { _id: 1 } }
-  );
+export async function getHistory(repoId, { limit, before, userId } = {}) {
+  const chat = await Chat.collection.findOne(scope(repoId, userId), {
+    sort: { _id: 1 },
+  });
   if (!chat) return null;
   if (Array.isArray(chat.messages)) await migrateLegacyChat(chat);
 
@@ -124,7 +129,7 @@ export async function getHistory(repoId, { limit, before } = {}) {
     Math.max(Number.parseInt(limit, 10) || HISTORY_PAGE_DEFAULT, 1),
     HISTORY_PAGE_MAX
   );
-  const filter = { repo: repoId };
+  const filter = scope(repoId, userId);
   if (before) filter._id = { $lt: before };
 
   const rows = await ChatMessage.find(filter, "role content createdAt")
@@ -137,22 +142,28 @@ export async function getHistory(repoId, { limit, before } = {}) {
 }
 
 // The last `n` messages, oldest first (conversation memory for the model)
-export async function getRecentMessages(repoId, n) {
-  const rows = await ChatMessage.find({ repo: repoId }, "role content")
+export async function getRecentMessages(repoId, n, userId = null) {
+  const rows = await ChatMessage.find(scope(repoId, userId), "role content")
     .sort({ _id: -1 })
     .limit(n)
     .lean();
   if (rows.length) return rows.reverse();
 
   // Nothing in the new collection: the chat may still be in the old format
+  if (userId) return []; // per-user chats never existed in the old format
   const chat = await Chat.collection.findOne({ repo: repoId });
   return Array.isArray(chat?.messages) ? chat.messages.slice(-n) : [];
 }
 
 // Summaries (preview, last activity) for many repos in one query
-export async function getChatSummaries(repoIds) {
+//
+// With `userId`, chats that belong to other users (guests' chats on a shared
+// sample repo) are left out.
+export async function getChatSummaries(repoIds, userId = null) {
+  const filter = { repo: { $in: repoIds } };
+  if (userId) filter.$or = [{ user: userId }, { user: { $exists: false } }];
   const chats = await Chat.collection
-    .find({ repo: { $in: repoIds } })
+    .find(filter)
     .sort({ _id: 1 })
     .toArray();
   const byRepo = new Map();

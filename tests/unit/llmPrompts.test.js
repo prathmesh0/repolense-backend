@@ -45,4 +45,23 @@ describe("generateRepoAnalysis prompt", () => {
     expect(caught.message).toBe("Groq failed to generate AI analysis");
     expect(caught.message).not.toContain("upstream secret detail");
   });
+
+  it("refuses to ask the model about empty content", async () => {
+    await expect(generateRepoAnalysis("   ")).rejects.toMatchObject({
+      statusCode: 422,
+    });
+    expect(askLLM).not.toHaveBeenCalled();
+  });
+
+  it("fails instead of saving a placeholder when the reply is unusable", async () => {
+    askLLM.mockResolvedValue("sorry, I cannot help with that");
+    await expect(generateRepoAnalysis("some code")).rejects.toBeInstanceOf(
+      ApiError
+    );
+
+    askLLM.mockResolvedValue('{"architecture":"MVC"}'); // no summary
+    await expect(generateRepoAnalysis("some code")).rejects.toBeInstanceOf(
+      ApiError
+    );
+  });
 });

@@ -21,6 +21,11 @@ export const verifyJWT = asyncHandler(async (req, _, next) => {
       throw new ApiError(401, "Invalid access token");
     }
 
+    // Guests are removed by a periodic sweep; until then, refuse an expired one
+    if (user.isDemo && user.expiresAt && user.expiresAt <= new Date()) {
+      throw new ApiError(401, "Demo session expired");
+    }
+
     req.user = user;
     next();
   } catch (error) {

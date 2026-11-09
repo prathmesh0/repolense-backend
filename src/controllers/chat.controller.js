@@ -12,6 +12,7 @@ import {
   getHistory,
   getRecentMessages,
 } from "../services/chatHistory.service.js";
+import { User } from "../models/user.model.js";
 import { logger } from "../utils/logger.js";
 
 const MAX_QUESTION_LENGTH = 2000;
@@ -30,15 +31,33 @@ function readQuestion(req) {
   return question.trim();
 }
 
-const loadRecentMessages = (repoId) =>
-  getRecentMessages(repoId, HISTORY_MAX_MESSAGES);
+// Sample repos are shared, so their chats are stored per user. A user's own
+// repo keeps its single chat (no user key).
+const chatOwner = (req) => (req.repo.isSample ? req.user._id : null);
+
+const loadRecentMessages = (req) =>
+  getRecentMessages(req.repo._id, HISTORY_MAX_MESSAGES, chatOwner(req));
 
 // One exchange = the question and its answer, saved together in order
-const saveExchange = (repoId, question, answer) =>
-  appendMessages(repoId, [
-    { role: "user", content: question },
-    { role: "assistant", content: answer },
-  ]);
+async function saveExchange(req, question, answer) {
+  const repoId = req.repo._id;
+  const chatId = await appendMessages(
+    repoId,
+    [
+      { role: "user", content: question },
+      { role: "assistant", content: answer },
+    ],
+    chatOwner(req)
+  );
+  // A sample repo joins the guest's history once they actually chat about it
+  if (req.repo.isSample) {
+    await User.updateOne(
+      { _id: req.user._id },
+      { $addToSet: { repoHistory: repoId } }
+    );
+  }
+  return chatId;
+}
 
 const sse = (res, event, data) =>
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -50,7 +69,7 @@ const sse = (res, event, data) =>
 //   event: error    {message}
 async function streamChat(req, res, question) {
   const repoId = req.repo._id;
-  const messages = await loadRecentMessages(repoId);
+  const messages = await loadRecentMessages(req);
 
   const controller = new AbortController();
   res.on("close", () => {
@@ -91,7 +110,7 @@ async function streamChat(req, res, question) {
     }
 
     if (controller.signal.aborted) return; // client left: nothing to save
-    const chatId = await saveExchange(repoId, question, answer);
+    const chatId = await saveExchange(req, question, answer);
     sse(res, "done", { chatId });
   } catch (error) {
     if (!controller.signal.aborted) {
@@ -105,16 +124,17 @@ async function streamChat(req, res, question) {
   }
 }
 
-// Both handlers run after requireOwnedRepo, so req.repo belongs to the user
+// Both handlers run after requireAccessibleRepo: req.repo is the user's own
+// repo or a shared sample
 export const chatWithRepoController = asyncHandler(async (req, res) => {
   const repoId = req.repo._id;
   const question = readQuestion(req);
 
   if (req.query.stream === "true") return streamChat(req, res, question);
 
-  const messages = await loadRecentMessages(repoId);
+  const messages = await loadRecentMessages(req);
   const { answer, sources } = await chatWithRepo(repoId, question, messages);
-  const chatId = await saveExchange(repoId, question, answer);
+  const chatId = await saveExchange(req, question, answer);
 
   return res
     .status(200)
@@ -127,7 +147,11 @@ export const getChatHistoryForRepo = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Invalid 'before' cursor");
   }
 
-  const history = await getHistory(req.repo._id, { limit, before });
+  const history = await getHistory(req.repo._id, {
+    limit,
+    before,
+    userId: chatOwner(req),
+  });
 
   // Reads must not write: return an empty history without creating a chat
   if (!history) {

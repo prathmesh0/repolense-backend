@@ -30,11 +30,21 @@ const userSchema = new Schema(
     refreshToken: {
       type: String,
     },
+
+    // Demo guests: temporary users created by POST /users/demo-login.
+    // Everything they own is deleted at expiresAt (see demo.service.js).
+    isDemo: { type: Boolean, default: false },
+    expiresAt: { type: Date },
+    demoAnalysesUsed: { type: Number, default: 0 },
+    demoChatCount: { type: Number, default: 0 },
   },
   {
     timestamps: true,
   }
 );
+
+// The sweeper looks for expired guests
+userSchema.index({ expiresAt: 1 }, { sparse: true });
 
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
@@ -47,7 +57,9 @@ userSchema.methods.isPasswordCorrect = async function (password) {
   return await bcrypt.compare(password, this.password);
 };
 
-userSchema.methods.generateAccessToken = function () {
+userSchema.methods.generateAccessToken = function (
+  expiresIn = process.env.ACCESS_TOKEN_EXPIRY
+) {
   return jwt.sign(
     {
       _id: this._id,
@@ -56,7 +68,7 @@ userSchema.methods.generateAccessToken = function () {
     },
     process.env.ACCESS_TOKEN_SECRET,
     {
-      expiresIn: process.env.ACCESS_TOKEN_EXPIRY,
+      expiresIn,
     }
   );
 };

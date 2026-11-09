@@ -64,3 +64,9 @@ export function clearAuthCookies(res) {
     .clearCookie("accessToken", clearCookieOptions())
     .clearCookie("refreshToken", clearCookieOptions());
 }
+
+// Demo guests get a browser-session cookie: no maxAge/expires, so it disappears
+// when the browser is closed. The token inside also expires on its own.
+export function setSessionAccessCookie(res, accessToken) {
+  return res.cookie("accessToken", accessToken, baseOptions());
+}

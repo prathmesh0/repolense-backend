@@ -5,6 +5,13 @@ import { askLLM } from "./llm.service.js";
 import { UNTRUSTED_NOTICE, wrapUntrusted } from "../utils/prompt.js";
 import { logger } from "../utils/logger.js";
 
+const requireSummary = (summary) => {
+  if (typeof summary !== "string" || !summary.trim()) {
+    throw new Error("Analysis has no summary");
+  }
+  return summary.trim();
+};
+
 const betterParseJSON = (text) => {
   try {
     // Remove headers/anchors if present
@@ -28,10 +35,7 @@ const betterParseJSON = (text) => {
     // (same logic as in your safeParseJSON)
 
     return {
-      summary:
-        typeof parsed.summary === "string"
-          ? parsed.summary.trim()
-          : "No summary",
+      summary: requireSummary(parsed.summary),
       architecture:
         typeof parsed.architecture === "string"
           ? parsed.architecture.trim()
@@ -50,18 +54,15 @@ const betterParseJSON = (text) => {
         : [],
     };
   } catch (err) {
-    logger.error("Error details:", err);
-    // Return fallback (as before)
-    return {
-      summary: "Parsing failed",
-      architecture: "Unknown",
-      complexity: "Medium",
-      potentialIssues: [text.slice(0, 500)],
-    };
+    // Do not store a placeholder as if it were a real result: the caller
+    // marks the stage failed so the user can retry.
+    logger.error("Could not parse the AI analysis: %s", err.message);
+    throw new Error("Unusable AI analysis response");
   }
 };
 
 const ANALYSIS_SYSTEM_PROMPT = `You analyse source code repositories.
+The repository text starts with a file tree, followed by the most important files (long files may be cut and marked [truncated]). Base your answer on it.
 Respond ONLY with one valid JSON object: no extra text, markdown, headers, or multiple blocks.
 Shape:
 {
@@ -73,6 +74,9 @@ Shape:
 ${UNTRUSTED_NOTICE}`;
 
 export const generateRepoAnalysis = async (repoContentText) => {
+  if (typeof repoContentText !== "string" || !repoContentText.trim()) {
+    throw new ApiError(422, "No repository content to analyse");
+  }
   try {
     const text = await askLLM({
       system: ANALYSIS_SYSTEM_PROMPT,

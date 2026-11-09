@@ -6,6 +6,8 @@ import mongoose from "mongoose";
 // service migrates them on first access (see scripts/migrate-chat-messages.js).
 const chatSchema = new mongoose.Schema({
   repo: { type: mongoose.Schema.Types.ObjectId, ref: "Repo", required: true },
+  // Set only for chats on a shared sample repo, where every guest has their own
+  user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   lastMessage: {
     role: { type: String, enum: ["user", "assistant"] },
     content: String,
@@ -16,5 +18,6 @@ const chatSchema = new mongoose.Schema({
 });
 
 chatSchema.index({ repo: 1 });
+chatSchema.index({ user: 1 }, { sparse: true });
 
 export const Chat = mongoose.model("Chat", chatSchema);

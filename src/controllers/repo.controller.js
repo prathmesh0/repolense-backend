@@ -1,30 +1,21 @@
 import { Repo } from "../models/repo.model.js";
-import { octokit } from "../services/github.client.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
-import { User } from "../models/user.model.js";
+import { findActiveJob, getQueueInfo } from "../services/jobQueue.service.js";
 import {
-  enqueueAnalysis,
-  findActiveJob,
-  getQueueInfo,
-} from "../services/jobQueue.service.js";
+  fetchGithubRepoMeta,
+  ingestRepo,
+  parseRepoUrl,
+} from "../services/repoIngest.service.js";
+import { refundAnalysis, reserveAnalysis } from "../services/demo.service.js";
+import { demoConfig } from "../utils/demoConfig.js";
 import { computeProgress } from "../services/repoStatus.service.js";
 import { Analysis } from "../models/analysis.model.js";
 import { logger } from "../utils/logger.js";
 
-const parseRepoUrl = (url) => {
-  try {
-    // Remove trailing slashes and .git
-    const normalizedUrl = url.replace(/\/+$/, "").replace(/\.git$/, "");
-    const match = normalizedUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-    if (!match) return null;
-    return { owner: match[1], name: match[2], url: normalizedUrl };
-  } catch (error) {
-    logger.error("Error details:", error);
-    throw new ApiError(401, "Error parsing GitHub URL");
-  }
-};
+const demoError = (status, message, code) =>
+  new ApiError(status, message, [{ code }]);
 
 // Main controller with Parrallel processing
 
@@ -46,154 +37,98 @@ const analyseRepo = asyncHandler(async (req, res) => {
   }
 
   const { owner, name, url: normalizedUrl } = parsed;
-
-  // Robust error handling example for Octokit calls
-  let repoData, branchData, contributorData, langData;
-  try {
-    const responses = await Promise.all([
-      octokit.repos.get({ owner, repo: name }),
-      octokit.repos.listBranches({ owner, repo: name, per_page: 100 }),
-      octokit.repos.listContributors({ owner, repo: name, per_page: 100 }),
-      octokit.repos.listLanguages({ owner, repo: name }),
-    ]);
-    repoData = responses[0].data;
-    branchData = responses[1].data;
-    contributorData = responses[2].data;
-    langData = responses[3].data;
-  } catch (err) {
-    if (err.status === 404) {
-      throw new ApiError(404, "GitHub repository not found or inaccessible");
-    } else if (err.status === 401) {
-      throw new ApiError(401, "Unauthorized - Invalid or expired GitHub token");
-    } else {
-      throw new ApiError(
-        500,
-        "Something went wrong while accessing GitHub API"
+  const isDemo = Boolean(req.user.isDemo);
+  const inProgressResponse = (repo) =>
+    res
+      .status(200)
+      .json(
+        new ApiResponse(
+          200,
+          { basicInfo: repo },
+          "Analysis for this repository is already in progress."
+        )
       );
-    }
-  }
 
-  const branches = (branchData || []).map((b) => b.name);
-  const contributors = (contributorData || []).map((c) => c.login);
-  const languages = Object.keys(langData || {});
-
-  let totalCommits = 0;
-  try {
-    const commitsResponse = await octokit.repos.listCommits({
-      owner,
-      repo: name,
-      per_page: 1,
-    });
-    const linkHeader = commitsResponse.headers?.link;
-    if (linkHeader) {
-      // look for rel="last"
-      const lastPageMatch =
-        linkHeader.match(/&page=(\d+)[^>]*>\s*;\s*rel="last"/) ||
-        linkHeader.match(/page=(\d+)[^>]*>\s*;\s*rel="last"/);
-      if (lastPageMatch) {
-        totalCommits = parseInt(lastPageMatch[1], 10);
-      } else {
-        totalCommits = commitsResponse.data.length || 0;
-      }
-    } else {
-      totalCommits = commitsResponse.data.length || 0;
-    }
-  } catch (err) {
-    totalCommits = 0; // safe fallback
-    logger.warn("Could not fetch commits:", err.message);
-  }
-
-  // Find/create repo per-user to avoid cross-user sharing
-
-  let repo = await Repo.findOne({
-    url: normalizedUrl,
-    user: userId,
-  });
-
-  if (repo) {
-    // An analysis is already queued or running: don't start another one that
-    // would delete and rebuild the same files/embeddings underneath it.
-    if (await findActiveJob(repo._id)) {
+  if (isDemo) {
+    // A repo the guest already analysed is returned as is: no GitHub calls,
+    // no re-run, no quota.
+    const existing = await Repo.findOne({ url: normalizedUrl, user: userId });
+    if (existing) {
+      if (await findActiveJob(existing._id)) return inProgressResponse(existing);
       return res
         .status(200)
         .json(
           new ApiResponse(
             200,
-            { basicInfo: repo },
-            "Analysis for this repository is already in progress."
+            { basicInfo: existing },
+            "You already analysed this repository."
           )
         );
     }
-
-    // Update existing repo
-    repo.name = repoData.name;
-    repo.owner = owner;
-    repo.stars = repoData.stargazers_count || 0;
-    repo.forks = repoData.forks_count || 0;
-    repo.watchers = repoData.subscribers_count || 0;
-    repo.description = repoData.description || "";
-    repo.branches = branches;
-    repo.contributors = contributors;
-    repo.languages = languages;
-    repo.commitCount = totalCommits;
-    repo.lastSynced = new Date();
-
-    // Keep statuses as-is if already processing/ready; don't overwrite "ready"
-    if (!repo.fileStructureStatus) repo.fileStructureStatus = "pending";
-    if (!repo.aiStatus) repo.aiStatus = "pending";
-    if (!repo.embeddingStatus) repo.embeddingStatus = "pending";
-
-    await repo.save();
-  } else {
-    repo = await Repo.create({
-      name: repoData.name,
-      owner,
-      url: normalizedUrl,
-      stars: repoData.stargazers_count || 0,
-      forks: repoData.forks_count || 0,
-      watchers: repoData.subscribers_count || 0,
-      description: repoData.description || "",
-      branches,
-      contributors,
-      languages,
-      commitCount: totalCommits,
-      user: userId,
-      lastSynced: new Date(),
-      fileStructureStatus: "pending",
-      aiStatus: "pending",
-      embeddingStatus: "pending",
-    });
   }
 
-  // Link Repo to User (atomic)
-  await User.findByIdAndUpdate(
-    userId,
-    { $addToSet: { repoHistory: repo._id } }, // adds only if not present
-    { new: true }
-  );
+  const meta = await fetchGithubRepoMeta(owner, name);
 
-  // Ensure repo saved (race prevention)
-  await repo.save();
+  if (isDemo) {
+    const { maxRepoKb, maxAnalyses } = demoConfig();
+    if (meta.repoData.private) {
+      throw demoError(
+        400,
+        "The demo can only analyse public repositories.",
+        "DEMO_REPO_NOT_ALLOWED"
+      );
+    }
+    if ((meta.repoData.size ?? 0) > maxRepoKb) {
+      throw demoError(
+        400,
+        "This repository is too large for the demo. Try a smaller one, or sign up.",
+        "DEMO_REPO_TOO_LARGE"
+      );
+    }
 
-  // START PARALLEL TASK
-  // Start background tasks (non-blocking)
-  // - Set statuses to processing before enqueue
-  // - These functions should update repo.fileStructureStatus / repo.aiStatus on completion
+    // Take a quota slot only now: bad URLs and missing, private or oversize
+    // repos above never cost one.
+    if (!(await reserveAnalysis(userId))) {
+      logger.info(
+        { event: "demo_limit_hit", kind: "analyse" },
+        "Demo limit hit"
+      );
+      throw demoError(
+        403,
+        `Demo limit reached (${maxAnalyses} analyses). Sign up to analyse more.`,
+        "DEMO_LIMIT_REACHED"
+      );
+    }
+  }
 
-  // mark processing (persist) and clear the previous run's progress/errors
-  repo.fileStructureStatus = "processing";
-  repo.aiStatus = "processing";
-  repo.embeddingStatus = "processing";
-  repo.set("progress", {
-    fileStructure: { done: 0, total: 0 },
-    embedding: { done: 0, total: 0 },
-  });
-  repo.set("statusErrors", {});
-  await repo.save();
+  let result;
+  try {
+    result = await ingestRepo({
+      userId,
+      owner,
+      name,
+      url: normalizedUrl,
+      meta,
+      extra: isDemo ? { ownerIsDemo: true } : {},
+      priority: isDemo ? 1 : 0,
+    });
+  } catch (error) {
+    // The slot was not used: nothing was started
+    if (isDemo) await refundAnalysis(userId);
+    // Two quick clicks: the other request created the repo first
+    if (isDemo && error.code === 11000) {
+      const repo = await Repo.findOne({ url: normalizedUrl, user: userId });
+      if (repo) return inProgressResponse(repo);
+    }
+    throw error;
+  }
 
-  // Queued for the background worker; the client polls getRepoInfo for
-  // status and progress. The queue survives restarts and retries crashed runs.
-  await enqueueAnalysis(repo._id, owner, name);
+  if (result.inProgress) {
+    if (isDemo) await refundAnalysis(userId);
+    return inProgressResponse(result.repo);
+  }
+
+  if (isDemo) logger.info({ event: "demo_analyse" }, "Demo analyse");
 
   // Return response immediately
   return res
@@ -201,10 +136,35 @@ const analyseRepo = asyncHandler(async (req, res) => {
     .json(
       new ApiResponse(
         201,
-        { basicInfo: repo },
+        { basicInfo: result.repo },
         "Repository added successfully; analysis running in background."
       )
     );
+});
+
+// Pre-analysed sample repos that every logged-in user can open
+const getSampleRepos = asyncHandler(async (_req, res) => {
+  const samples = await Repo.find({
+    isSample: true,
+    fileStructureStatus: "ready",
+    embeddingStatus: "ready",
+  })
+    .sort({ name: 1 })
+    .lean();
+  return res.json(
+    new ApiResponse(
+      200,
+      samples.map((r) => ({
+        repoId: r._id,
+        name: r.name,
+        owner: r.owner,
+        description: r.description || "",
+        language: r.languages?.[0] ?? null,
+        stars: r.stars ?? 0,
+      })),
+      "Sample repositories fetched successfully"
+    )
+  );
 });
 
 // Get repo Info
@@ -318,4 +278,4 @@ const getRepoInfo = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, responseData, message));
 });
 
-export { analyseRepo, getRepoInfo };
+export { analyseRepo, getRepoInfo, getSampleRepos };
