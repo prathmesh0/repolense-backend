@@ -1,4 +1,5 @@
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { demoConfig } from "../utils/demoConfig.js";
 
 const buildLimiter = ({ windowMs, limit, message }) =>
   rateLimit({
@@ -45,3 +46,62 @@ export const chatLimiter = buildLimiter({
   limit: 15,
   message: "You're sending messages too fast, please slow down.",
 });
+
+// ---- Demo mode -----------------------------------------------------------
+// Always keyed by IP: a guest can clear cookies and mint a new identity, so
+// per-user limits alone would not stop a loop.
+const demoLimiter = ({ windowMs, limit, message, ...rest }) =>
+  rateLimit({
+    windowMs,
+    limit,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(req.ip),
+    handler: (req, res) =>
+      res.status(429).json({
+        success: false,
+        message,
+        errors: [{ code: "DEMO_RATE_LIMITED" }],
+        data: null,
+      }),
+    ...rest,
+  });
+
+// Built on first use so the DEMO_* env values are read after dotenv has loaded
+const lazy = (build) => {
+  let limiter;
+  return (req, res, next) => {
+    limiter ??= build();
+    return limiter(req, res, next);
+  };
+};
+
+export const demoLoginHourlyLimiter = lazy(() =>
+  demoLimiter({
+    windowMs: 60 * 60 * 1000,
+    limit: demoConfig().loginPerHour,
+    message: "Too many demo sessions from your network. Please try later.",
+  })
+);
+
+export const demoLoginDailyLimiter = lazy(() =>
+  demoLimiter({
+    windowMs: 24 * 60 * 60 * 1000,
+    limit: demoConfig().loginPerDay,
+    message:
+      "Daily demo limit reached for your network. Please sign up instead.",
+  })
+);
+
+// Counts only analyses that actually started (201), and only for guests
+export const demoIpAnalysisLimiter = lazy(() =>
+  demoLimiter({
+    windowMs: 24 * 60 * 60 * 1000,
+    limit: demoConfig().ipDailyAnalyses,
+    message:
+      "Daily demo analysis limit reached for your network. Please sign up.",
+    skip: (req) => !req.user?.isDemo,
+    requestWasSuccessful: (_req, res) => res.statusCode === 201,
+    skipFailedRequests: true,
+  })
+);

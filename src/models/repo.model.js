@@ -86,6 +86,11 @@ const repoSchema = new Schema(
       ref: "User",
     }, // who added this repo
 
+    // Pre-analysed demo repo, readable (not editable) by every logged-in user
+    isSample: { type: Boolean, default: false },
+    // Created by a demo guest; lets the cleanup find orphans of deleted guests
+    ownerIsDemo: { type: Boolean, default: false },
+
     // Live progress of the long-running stages
     progress: {
       fileStructure: {
@@ -111,5 +116,11 @@ const repoSchema = new Schema(
 
 // Compound unique index for (url, user)
 repoSchema.index({ url: 1, user: 1 }, { unique: true });
+
+repoSchema.index({ isSample: 1 }, { partialFilterExpression: { isSample: true } });
+repoSchema.index(
+  { ownerIsDemo: 1 },
+  { partialFilterExpression: { ownerIsDemo: true } }
+);
 
 export const Repo = mongoose.model("Repo", repoSchema);

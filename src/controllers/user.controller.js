@@ -6,7 +6,18 @@ import { getChatSummaries } from "../services/chatHistory.service.js";
 import jwt from "jsonwebtoken";
 import Fuse from "fuse.js";
 import { logger } from "../utils/logger.js";
-import { clearAuthCookies, setAuthCookies } from "../utils/authCookies.js";
+import {
+  clearAuthCookies,
+  clearCookieOptions,
+  setAuthCookies,
+  setSessionAccessCookie,
+} from "../utils/authCookies.js";
+import {
+  createDemoUser,
+  deleteDemoUser,
+  demoInfo,
+} from "../services/demo.service.js";
+import { demoConfig } from "../utils/demoConfig.js";
 
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
@@ -111,7 +122,48 @@ const loginUser = asyncHandler(async (req, res) => {
     );
 });
 
+// Fields of a user that are safe to return, plus the demo block for guests
+const publicUser = (user) => ({
+  _id: user._id,
+  username: user.username,
+  email: user.isDemo ? undefined : user.email,
+  createdAt: user.createdAt,
+  isDemo: Boolean(user.isDemo),
+  ...(user.isDemo ? { demo: demoInfo(user) } : {}),
+});
+
+// One click, no registration: creates a temporary guest user with a
+// browser-session cookie, no refresh token, and a hard expiry.
+const demoLogin = asyncHandler(async (req, res) => {
+  if (!demoConfig().enabled) {
+    throw new ApiError(503, "The live demo is not available right now.", [
+      { code: "DEMO_DISABLED" },
+    ]);
+  }
+
+  const { user, accessToken } = await createDemoUser();
+  logger.info({ event: "demo_login" }, "Demo login");
+
+  // A stale refresh cookie from an earlier real login must not outlive this
+  res.clearCookie("refreshToken", clearCookieOptions());
+  return setSessionAccessCookie(res.status(200), accessToken).json(
+    new ApiResponse(
+      200,
+      { user: publicUser(user), accessToken },
+      "Demo session started"
+    )
+  );
+});
+
 const logoutUser = asyncHandler(async (req, res) => {
+  // "End demo": the guest and everything it owns is deleted right away
+  if (req.user.isDemo) {
+    await deleteDemoUser(req.user._id);
+    return clearAuthCookies(res.status(200)).json(
+      new ApiResponse(200, {}, "Demo ended and data deleted")
+    );
+  }
+
   await User.findByIdAndUpdate(
     req.user._id,
     {
@@ -201,7 +253,10 @@ const getUserRepoHistoryAndChats = asyncHandler(async (req, res) => {
   }
 
   // Chat summaries for all repos in one query
-  const summaries = await getChatSummaries(filteredRepos.map((r) => r._id));
+  const summaries = await getChatSummaries(
+    filteredRepos.map((r) => r._id),
+    userId
+  );
   const repoChats = filteredRepos.map((repo) => {
     const chat = summaries.get(String(repo._id));
     return {
@@ -234,13 +289,11 @@ const getUserRepoHistoryAndChats = asyncHandler(async (req, res) => {
 
 // Who am I: the single source of truth for the logged-in state
 const getCurrentUser = asyncHandler(async (req, res) => {
-  const { _id, username, email, createdAt } = req.user;
-  return res.json(
-    new ApiResponse(200, { _id, username, email, createdAt }, "Current user")
-  );
+  return res.json(new ApiResponse(200, publicUser(req.user), "Current user"));
 });
 
 export {
+  demoLogin,
   getCurrentUser,
   registerUser,
   loginUser,

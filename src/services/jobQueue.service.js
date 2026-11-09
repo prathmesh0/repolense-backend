@@ -18,11 +18,20 @@ const INTERRUPTED_MESSAGE =
 
 // Adds an analysis job. If the repo already has a live job, returns it
 // instead (the unique partial index makes this race-safe).
-export async function enqueueAnalysis(repoId, owner, name) {
+export async function enqueueAnalysis(
+  repoId,
+  owner,
+  name,
+  { priority = 0 } = {}
+) {
   let job;
   let created = true;
   try {
-    job = await Job.create({ repo: repoId, payload: { owner, name } });
+    job = await Job.create({
+      repo: repoId,
+      payload: { owner, name },
+      priority,
+    });
   } catch (error) {
     if (error.code !== 11000) throw error;
     job = await Job.findOne({ repo: repoId, active: true });
@@ -62,7 +71,7 @@ export function claimNextJob() {
       $set: { status: "running", lockedAt: now, lockedBy: WORKER_ID },
       $inc: { attempts: 1 },
     },
-    { sort: { runAt: 1, createdAt: 1 }, returnDocument: "after" }
+    { sort: { priority: 1, runAt: 1, createdAt: 1 }, returnDocument: "after" }
   );
 }
 

@@ -9,6 +9,10 @@ import {
   startWorker,
   stopWorker,
 } from "./services/jobQueue.service.js";
+import {
+  startDemoCleanup,
+  stopDemoCleanup,
+} from "./services/demo.service.js";
 import { logger } from "./utils/logger.js";
 
 connectDB()
@@ -17,6 +21,8 @@ connectDB()
     await requeueStaleJobs();
     // Fail repos left "processing" with no job behind them
     startStatusSweeper();
+    // Delete expired demo guests and everything they own
+    startDemoCleanup();
 
     // RUN_WORKER=false keeps analysis off this process (use `npm run worker`)
     const runWorker = process.env.RUN_WORKER !== "false";
@@ -29,6 +35,7 @@ connectDB()
     const shutdown = async (signal) => {
       logger.info("%s received, shutting down", signal);
       server.close();
+      stopDemoCleanup();
       await stopWorker();
       await mongoose.disconnect();
       process.exit(0);
